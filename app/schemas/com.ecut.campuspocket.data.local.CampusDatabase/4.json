@@ -1,0 +1,480 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 4,
+    "identityHash": "cf9a1e9b065daa4565365d65eb8c557f",
+    "entities": [
+      {
+        "tableName": "auth_credentials",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`systemId` TEXT NOT NULL, `domain` TEXT NOT NULL, `cookie` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`systemId`))",
+        "fields": [
+          {
+            "fieldPath": "systemId",
+            "columnName": "systemId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "domain",
+            "columnName": "domain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cookie",
+            "columnName": "cookie",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "systemId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_auth_credentials_domain",
+            "unique": false,
+            "columnNames": [
+              "domain"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_auth_credentials_domain` ON `${TABLE_NAME}` (`domain`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "cookies",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`domain` TEXT NOT NULL, `name` TEXT NOT NULL, `value` TEXT NOT NULL, `path` TEXT NOT NULL, `expiresAt` INTEGER NOT NULL, `secure` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`domain`, `name`, `path`))",
+        "fields": [
+          {
+            "fieldPath": "domain",
+            "columnName": "domain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAt",
+            "columnName": "expiresAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "secure",
+            "columnName": "secure",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "domain",
+            "name",
+            "path"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_cookies_domain",
+            "unique": false,
+            "columnNames": [
+              "domain"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_cookies_domain` ON `${TABLE_NAME}` (`domain`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "electricity_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `epochDay` INTEGER NOT NULL, `lightingKwh` REAL NOT NULL, `acKwh` REAL NOT NULL, `balance` REAL, `recordedAt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epochDay",
+            "columnName": "epochDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lightingKwh",
+            "columnName": "lightingKwh",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acKwh",
+            "columnName": "acKwh",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "balance",
+            "columnName": "balance",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "recordedAt",
+            "columnName": "recordedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "course_blocks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `dayOfWeek` INTEGER NOT NULL, `startSlot` INTEGER NOT NULL, `slotSpan` INTEGER NOT NULL, `title` TEXT NOT NULL, `room` TEXT NOT NULL, `teacher` TEXT NOT NULL, `startPeriod` INTEGER NOT NULL, `endPeriod` INTEGER NOT NULL, `campus` TEXT NOT NULL, `startWeek` INTEGER NOT NULL, `endWeek` INTEGER NOT NULL, `colorSeed` INTEGER NOT NULL, `weeksSpec` TEXT NOT NULL, `weeksCsv` TEXT NOT NULL, `courseCode` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayOfWeek",
+            "columnName": "dayOfWeek",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startSlot",
+            "columnName": "startSlot",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slotSpan",
+            "columnName": "slotSpan",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "room",
+            "columnName": "room",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "teacher",
+            "columnName": "teacher",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startPeriod",
+            "columnName": "startPeriod",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endPeriod",
+            "columnName": "endPeriod",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "campus",
+            "columnName": "campus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startWeek",
+            "columnName": "startWeek",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endWeek",
+            "columnName": "endWeek",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorSeed",
+            "columnName": "colorSeed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weeksSpec",
+            "columnName": "weeksSpec",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weeksCsv",
+            "columnName": "weeksCsv",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseCode",
+            "columnName": "courseCode",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "grades",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `courseName` TEXT NOT NULL, `score` TEXT NOT NULL, `credit` REAL NOT NULL, `gpa` REAL NOT NULL, `term` TEXT NOT NULL, `courseCode` TEXT NOT NULL, `nature` TEXT NOT NULL, `examType` TEXT NOT NULL, `passed` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseName",
+            "columnName": "courseName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "score",
+            "columnName": "score",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "credit",
+            "columnName": "credit",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gpa",
+            "columnName": "gpa",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "term",
+            "columnName": "term",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseCode",
+            "columnName": "courseCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nature",
+            "columnName": "nature",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examType",
+            "columnName": "examType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passed",
+            "columnName": "passed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "exams",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `courseName` TEXT NOT NULL, `courseCode` TEXT NOT NULL, `examTime` TEXT NOT NULL, `examDate` TEXT NOT NULL, `startClock` TEXT NOT NULL, `endClock` TEXT NOT NULL, `examName` TEXT NOT NULL, `examType` TEXT NOT NULL, `location` TEXT NOT NULL, `campus` TEXT NOT NULL, `seatNo` TEXT NOT NULL, `ticketNo` TEXT NOT NULL, `note` TEXT NOT NULL, `term` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseName",
+            "columnName": "courseName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseCode",
+            "columnName": "courseCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examTime",
+            "columnName": "examTime",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examDate",
+            "columnName": "examDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startClock",
+            "columnName": "startClock",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endClock",
+            "columnName": "endClock",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examName",
+            "columnName": "examName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examType",
+            "columnName": "examType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "location",
+            "columnName": "location",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "campus",
+            "columnName": "campus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seatNo",
+            "columnName": "seatNo",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ticketNo",
+            "columnName": "ticketNo",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "term",
+            "columnName": "term",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'cf9a1e9b065daa4565365d65eb8c557f')"
+    ]
+  }
+}

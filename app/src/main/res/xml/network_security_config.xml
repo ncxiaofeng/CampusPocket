@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    校园内网仍有个别服务使用 HTTP（如部分电控 / 洗衣网关）。
+    仅放行明文流量，TLS 校验保持系统默认，不信任用户证书，也不关闭校验。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

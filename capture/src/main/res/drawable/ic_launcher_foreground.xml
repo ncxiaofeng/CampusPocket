@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 校园建筑剪影 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M28,76 L28,50 L40,50 L40,76 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M68,76 L68,50 L80,50 L80,76 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,76 L40,38 L68,38 L68,76 Z" />
+    <!-- 中部镂空窗 -->
+    <path
+        android:fillColor="#FF00695C"
+        android:pathData="M46,46 L62,46 L62,54 L46,54 Z" />
+    <!-- 书页 / 屋顶 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M26,38 L54,26 L82,38 L78,43 L54,34 L30,43 Z" />
+</vector>
