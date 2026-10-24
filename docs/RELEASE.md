@@ -58,6 +58,12 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 - 发布纪律：`versionCode` 递增、`versionName` 更新、始终用同一个 release keystore 签名；
   不要把 `.jks` / `keystore.properties` 提交到公开仓库。
 
+### 0.4.0 蓝奏云镜像（2026-10-24）
+
+- APK：https://ncxiaofeng.lanzoub.com/i38c64d7sg6f （20.4 MB；免费账号在手机端分享 APK 可能受限）
+- ZIP（含 APK + SHA256 + 安装说明）：https://ncxiaofeng.lanzoub.com/ic6YC4d7si7i （10.2 MB，手机友好）
+- 上传脚本只保存在本地 `_analysis/lanzou_upload.py`，Cookie 不入库；Cookie 过期后重新导出。
+
 ## 功能边界
 
 - 校园网检测仅探测学校内网主机，不读取 SSID、不申请定位权限。
