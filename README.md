@@ -64,8 +64,8 @@ keyPassword=******
 
 然后 `./gradlew assembleRelease` 会输出已签名的 `app-release.apk`（0.4.0 约 21 MB，R8 + 资源压缩）。
 
-> 本机测试用的 `keystore.properties` 指向 `debug.keystore`，只用于覆盖安装调试包做性能测试；
-> 公开分发前请换成专用 `release.jks`，并离线备份密钥与密码。
+> 正式签名使用项目外的专用 `release.jks`（`CampusPocket-keys/`）；`keystore.properties` 不入库，
+> 请离线备份密钥与密码。换签名后旧调试包无法覆盖安装。
 
 ## 目录
 

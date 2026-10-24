@@ -37,9 +37,9 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 
 发布签名：在项目根目录提供 `keystore.properties`（见 README），再次执行 `assembleRelease`。
 
-> 当前本机的 `keystore.properties` 指向 Android `debug.keystore`，只用于在已装调试包的手机上
-> 覆盖安装做性能测试。**公开分发前必须换成专用 release keystore**（`.jks` 与密码离线备份）；
-> 换签名后旧包无法覆盖安装，需要让用户卸载一次。
+> 正式签名使用项目外的专用 `release.jks`（本机位于 `CampusPocket-keys/`）；
+> `keystore.properties` 已被 gitignore，不入库。请把 `.jks` 与密码离线备份；
+> 换签名后旧调试包无法覆盖安装，需要让用户卸载一次。
 
 产物：
 
