@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # 发布用的 APK 放在临时分支 release-assets 上，避免把 20MB 二进制提交进 main。
+      # 发版流程：把 CampusPocket-<version>.apk 推到 release-assets，再打 tag。
+      - name: Checkout release assets
+        uses: actions/checkout@v4
+        with:
+          ref: release-assets
+          path: release-assets
+
+      - name: Resolve release asset
+        id: vars
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APK="release-assets/CampusPocket-${VERSION}.apk"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "apk=${APK}" >> "$GITHUB_OUTPUT"
+          test -f "$APK"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          NOTES="docs/RELEASE_NOTES_${VERSION}.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "${GITHUB_REF_NAME}" "${{ steps.vars.outputs.apk }}" \
+              --title "冻小梨 ${VERSION}" \
+              --notes-file "$NOTES"
+          else
+            gh release create "${GITHUB_REF_NAME}" "${{ steps.vars.outputs.apk }}" \
+              --title "冻小梨 ${VERSION}" \
+              --generate-notes
+          fi
