@@ -44,6 +44,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.BuildConfig
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.ui.theme.ErrorRed
 import kotlinx.coroutines.launch
 
@@ -80,6 +81,7 @@ fun CampusWebPageScreen(
     var cookiesReady by remember(cookieKey) { mutableStateOf(false) }
     var isLoading by remember(cookieKey) { mutableStateOf(true) }
     var sessionLost by remember(cookieKey) { mutableStateOf(false) }
+    var lastCasTicket by remember(cookieKey) { mutableStateOf<String?>(null) }
     var desktopMode by remember(cookieKey) {
         mutableStateOf(userAgent == null && desktopUserAgent)
     }
@@ -88,7 +90,11 @@ fun CampusWebPageScreen(
     LaunchedEffect(cookieKey) {
         val manager = CookieManager.getInstance()
         manager.setAcceptCookie(true)
-        (listOf(host) + extraCookieHosts).filter { it.isNotBlank() }.forEach { cookieHost ->
+        // 所有学校网页都注入 CAS 主凭据：已登录时官方页会直接静默 SSO。
+        (listOf(host, CampusEndpoints.CAS_HOST) + extraCookieHosts)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .forEach { cookieHost ->
             val rows = runCatching {
                 AppContainer.authRepository.loadCookiesForHost(cookieHost)
             }.getOrDefault(emptyList())
@@ -238,6 +244,19 @@ fun CampusWebPageScreen(
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
+                                // 从任意学校官方页登录后，顺手把 CASTGC 存成统一主凭据。
+                                // 只在 ticket 值变化时写库：首次加载可能还是注入的旧值，
+                                // 用户登录后 CAS 会换新值，这里会再存一次。
+                                val casRaw = CookieManager.getInstance()
+                                    .getCookie(CampusEndpoints.AUTH_SERVER_LOGIN_URL)
+                                    .orEmpty()
+                                val ticket = CasSsoManager.casTicketValue(casRaw)
+                                if (ticket != null && ticket != lastCasTicket) {
+                                    lastCasTicket = ticket
+                                    scope.launch {
+                                        runCatching { repo.saveCasMasterCookies(casRaw) }
+                                    }
+                                }
                                 if (saveSessionHost != null) {
                                     val currentUrl = url.orEmpty()
                                     val currentHost = Uri.parse(currentUrl).host.orEmpty()

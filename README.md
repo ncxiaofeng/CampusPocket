@@ -4,6 +4,14 @@
 
 > 非官方项目。仅限校园网环境使用，请遵守学校相关管理规定。
 
+## 下载
+
+- GitHub Releases：<https://github.com/ncxiaofeng/CampusPocket/releases>
+- 蓝奏云 APK（国内无法访问 GitHub 时）：<https://ncxiaofeng.lanzoub.com/i38c64d7sg6f>
+- 蓝奏云 ZIP（含 APK、SHA256 与安装说明）：<https://ncxiaofeng.lanzoub.com/ic6YC4d7si7i>
+
+App 内「更多 → 关于 冻小梨」也提供检查更新、项目地址和蓝奏云下载入口。
+
 ## 当前进度
 
 | 阶段 | 内容 | 状态 |
@@ -28,7 +36,9 @@
 - 电费：从今日校园“宿舍缴费”同步电表余额和最近 30 天日用量（按 7 天分块拉取，范围接口不可用时逐日兜底）；首页与电费页展示**昨日用电**（当天数据教务侧尚未结算）+ 7/30 天柱状图 + 历史记录
 - U净洗衣：手机号 + 短信验证码登录（复现 H5 内置的 HMAC 验证码签名）；支持广兰 / 青岚 / 抚州校区切换，只读展示附近洗衣房、波轮/滚筒空闲数、预计等待时间与洗护价格，以及运行中 / 历史订单；顶部“最近使用”从历史订单反查常用楼栋（如 16栋-1），解决它不在附近 10 家列表里的问题；可一键跳转支付宝 U净 小程序扫码下单/支付（App 不创建订单），登录态保存在本机加密数据库
 - 更多：账号状态、数据同步、成绩查询、生活服务分组、隐私说明、退出登录（清库 + 清 Cookie）
-- 会话过期：根布局红色警告条，一键跳转重新授权
+- 关于 冻小梨：检查更新（GitHub Releases API）、项目主页、蓝奏云 APK / ZIP 下载入口、版本信息
+- 统一身份认证单点登录：一次登录拿到 `CASTGC`，课表、成绩、考试、空闲教室、通知公告、电费、校园卡、办事大厅共用；各系统会话过期时自动静默换票，不再逐模块重新登录
+- 会话过期：根布局红色警告条，重新登录一次即可恢复全部统一认证系统
 - 校园网检测：启动 / 回到前台时探测内网主机；不在校园网时顶部提示并可自动跳转零信任 VPN 登录页
 - 校外 WebVPN：零信任认证后打开官方门户，进入“新教务管理系统”任一功能一次，App 会保存代理域会话；之后课表/成绩/考试/空闲教室会通过 `172-20-130-13.atrust.ecut.edu.cn` 代理同步，无需系统 VPN。门户右上角可切 PC / 手机 UA
 - 登录：内嵌教务 SSO / 官方 CAS 页面，用户手动完成登录；点击“完成登录”后由 `CookieManager` 提取 Cookie，教务目标要求主域名存在 `JSESSIONID`，再写入 SQLCipher
@@ -45,8 +55,7 @@
 本机工具链放在 `_toolchain/`（不随项目分发）：
 
 ```bash
-JAVA_HOME="<你的 JDK 17 路径>" \
-  ./gradlew assembleDebug
+JAVA_HOME="<你的 JDK 17 路径>" ./gradlew assembleDebug
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`
@@ -67,6 +76,17 @@ keyPassword=******
 > 正式签名使用项目外的专用 `release.jks`（`CampusPocket-keys/`）；`keystore.properties` 不入库，
 > 请离线备份密钥与密码。换签名后旧调试包无法覆盖安装。
 
+### 本地构建参数（不入库）
+
+`local.properties` 里可配置第三方 H5 的签名 / 系统参数：
+
+```properties
+ujing.hmac.key=...
+electricity.operator.pwd=...
+```
+
+未配置时，U净洗衣与宿舍电费会给出明确提示，其它功能不受影响。公开仓库不包含这些值。
+
 ## 目录
 
 ```
@@ -86,8 +106,7 @@ app/src/main/java/com/ecut/campuspocket/
 - 登录页始终是学校官方页面；App 不注入 JS 读取表单。
 - 退出登录会清空 `auth_credentials`、`cookies`、课表与电费缓存，并清空 WebView Cookie。
 - 应用禁止备份（`allowBackup=false`），数据库与偏好不参与云备份 / 设备迁移。
-- U净 验证码的 HMAC key 目前仍在 `UjingClient` 源码中（App 运行需要）；如果仓库转公开，
-  请改为构建期注入（`local.properties` / `BuildConfig`），并再次脱敏 `docs/INTEGRATION.md`。
+- U净验证码的 HMAC key 与宿舍缴费的 `operatorPwd` 已改为构建期注入（`local.properties` → `BuildConfig`），公开仓库不包含明文；未配置时对应功能会明确提示。
 
 ## 配套抓包工具
 

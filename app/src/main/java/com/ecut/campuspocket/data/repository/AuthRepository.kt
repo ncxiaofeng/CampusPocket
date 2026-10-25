@@ -8,6 +8,7 @@ import com.ecut.campuspocket.data.local.CourseDao
 import com.ecut.campuspocket.data.local.ElectricityDao
 import com.ecut.campuspocket.data.local.ExamDao
 import com.ecut.campuspocket.data.local.GradeDao
+import com.ecut.campuspocket.network.CampusEndpoints
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -75,6 +76,30 @@ class AuthRepository(
                 cookieDao.upsertAll(rows)
             }
         }
+    }
+
+    /**
+     * 保存统一身份认证主凭据（CASTGC）。
+     *
+     * 任何一个业务系统的 WebView 登录都可能经过 CAS，
+     * 只要 Cookie 里出现 CASTGC，就把它抽出来单独存一份，
+     * 之后所有 service 都能用它静默换票。
+     */
+    suspend fun saveCasMasterCookies(raw: String) {
+        // 只保留 CASTGC 本身：其它 Cookie（route / JSESSIONID）可能来自
+        // 零信任代理域名，复制到 CAS 主域反而添乱，下一次请求会重新下发。
+        val ticketPairs = parseCookiePairs(raw).filter { (name, _) ->
+            name.lowercase() in CampusEndpoints.CAS_TICKET_COOKIE_NAMES
+        }
+        if (ticketPairs.isEmpty()) return
+        val ticketHeader = ticketPairs.joinToString("; ") { (name, value) ->
+            "$name=$value"
+        }
+        saveLoginCookies(
+            systemId = CampusEndpoints.SYSTEM_CAS_MASTER,
+            primaryHost = CampusEndpoints.CAS_HOST,
+            cookieByHost = mapOf(CampusEndpoints.CAS_HOST to ticketHeader)
+        )
     }
 
     suspend fun saveSetCookies(

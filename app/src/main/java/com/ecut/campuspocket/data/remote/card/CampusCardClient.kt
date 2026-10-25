@@ -1,6 +1,7 @@
 package com.ecut.campuspocket.data.remote.card
 
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -44,7 +45,8 @@ data class CampusCardBillPage(
  */
 class CampusCardClient(
     private val client: OkHttpClient,
-    private val baseUrl: String = CampusEndpoints.EHALL_BASE_URL
+    private val baseUrl: String = CampusEndpoints.EHALL_BASE_URL,
+    private val ssoManager: CasSsoManager? = null
 ) {
 
     suspend fun fetchOverview(): CampusCardOverview = withContext(Dispatchers.IO) {
@@ -99,7 +101,42 @@ class CampusCardClient(
             CampusCardBillPage(items = items, total = total)
         }
 
-    private fun postData(path: String, payload: String): JsonObject {
+    /**
+     * ehall 会话过期时，先用 CASTGC 静默换票再重试一次；
+     * 主凭据也失效才提示用户登录。
+     */
+    private suspend fun postData(path: String, payload: String): JsonObject {
+        val first = postDataRaw(path, payload)
+        val text = if (!first.sessionExpired) {
+            first.body
+        } else {
+            val renewed = ssoManager
+                ?.ensureServiceSession(CampusEndpoints.EHALL_CARD_SERVICE_URL) == true
+            if (!renewed) {
+                throw SessionExpiredException("统一认证已过期，请重新登录")
+            }
+            val second = postDataRaw(path, payload)
+            if (second.sessionExpired) {
+                throw SessionExpiredException("统一认证已过期，请重新登录")
+            }
+            second.body
+        }
+        val root = try {
+            JsonParser.parseString(text).asJsonObject
+        } catch (exception: Exception) {
+            throw IOException("一卡通返回数据无法解析", exception)
+        }
+        val code = root.get("code")?.takeIf { !it.isJsonNull }?.asString
+        if (code != "0") {
+            throw IOException(
+                root.get("msg")?.takeIf { !it.isJsonNull }?.asString
+                    ?: "一卡通系统返回错误"
+            )
+        }
+        return root
+    }
+
+    private fun postDataRaw(path: String, payload: String): RawResponse {
         val body = FormBody.Builder().add("data", payload).build()
         val request = Request.Builder()
             .url(baseUrl + path)
@@ -116,27 +153,14 @@ class CampusCardClient(
                 throw IOException("一卡通系统返回 ${response.code}")
             }
             val text = response.body?.string().orEmpty()
-            if (text.contains("authserver") ||
+            val expired = text.contains("authserver") ||
                 text.contains("login_slogin") ||
                 text.trimStart().startsWith("<")
-            ) {
-                throw SessionExpiredException("一卡通登录已过期，请打开校园卡官方页重新登录")
-            }
-            val root = try {
-                JsonParser.parseString(text).asJsonObject
-            } catch (exception: Exception) {
-                throw IOException("一卡通返回数据无法解析", exception)
-            }
-            val code = root.get("code")?.takeIf { !it.isJsonNull }?.asString
-            if (code != "0") {
-                throw IOException(
-                    root.get("msg")?.takeIf { !it.isJsonNull }?.asString
-                        ?: "一卡通系统返回错误"
-                )
-            }
-            return root
+            return RawResponse(text, expired)
         }
     }
+
+    private data class RawResponse(val body: String, val sessionExpired: Boolean)
 
     private fun JsonObject.string(key: String): String {
         val value = get(key) ?: return ""

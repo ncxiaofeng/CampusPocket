@@ -1,5 +1,6 @@
 package com.ecut.campuspocket.data.remote.ujing
 
+import com.ecut.campuspocket.BuildConfig
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonArray
@@ -365,11 +366,19 @@ class UjingClient(
     }
 
     private fun captchaSignature(): Triple<String, Long, String> {
+        if (BuildConfig.UJING_HMAC_KEY.isBlank()) {
+            throw IOException("U净签名密钥未配置（local.properties: ujing.hmac.key）")
+        }
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
             .joinToString("") { "%02x".format(it) }
         val timestamp = System.currentTimeMillis() / 1000
         val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(HMAC_KEY.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        mac.init(
+            SecretKeySpec(
+                BuildConfig.UJING_HMAC_KEY.toByteArray(Charsets.UTF_8),
+                "HmacSHA256"
+            )
+        )
         val signature = Base64.getEncoder().encodeToString(
             mac.doFinal((nonce + timestamp).toByteArray(Charsets.UTF_8))
         )
@@ -421,7 +430,6 @@ class UjingClient(
     private companion object {
         const val APP_CODE = "BO"
         const val APP_VERSION = "1.1.4"
-        const val HMAC_KEY = "REDACTED"
         val JSON = "application/json; charset=utf-8".toMediaType()
     }
 }

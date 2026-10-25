@@ -86,6 +86,8 @@ fun LoginWebViewScreen(
         val urls = linkedSetOf<String>()
         webViewRef.value?.url?.let(urls::add)
         urls.addAll(target.extraCookieUrls)
+        // 无论从哪个系统登录，都顺手把 CAS 主凭据（CASTGC）带回去。
+        urls.add(CampusEndpoints.AUTH_SERVER_LOGIN_URL)
 
         val manager = CookieManager.getInstance()
         val result = LinkedHashMap<String, String>()
@@ -144,6 +146,17 @@ fun LoginWebViewScreen(
                 )
             }
             if (result.isSuccess) {
+                // 登录任意系统都可能经过 CAS；只要出现 CASTGC，就更新一次主凭据。
+                runCatching {
+                    repo.saveCasMasterCookies(cookieByHost[CampusEndpoints.CAS_HOST].orEmpty())
+                }
+                if (primaryHost != CampusEndpoints.CAS_HOST) {
+                    // 零信任代理域名（authserver-...atrust...）下拿到的 CASTGC 也镜像到 CAS 主域，
+                    // 让“先登零信任”同样能一次性解锁电费 / 校园卡。
+                    runCatching {
+                        repo.saveCasMasterCookies(cookieByHost[primaryHost].orEmpty())
+                    }
+                }
                 if (target.clearWebViewCookiesAfterSave) {
                     // 凭证已写入 SQLCipher，清除 WebView 的明文 Cookie 副本。
                     val cookieManager = CookieManager.getInstance()
@@ -328,6 +341,26 @@ fun LoginWebViewScreen(
                                 statusMessage = "认证已完成，正在保存会话…"
                                 view?.postDelayed({ completeLogin() }, 800)
                             }
+                            // 统一认证：已经离开 CAS 登录页且 CASTGC 出现，自动保存，
+                            // 不必再让用户点“完成登录”。停在 CAS 页时不动，避免把失效凭据存回去。
+                            if (target.systemId == CampusEndpoints.SYSTEM_CAS_MASTER &&
+                                currentHost.isNotBlank() &&
+                                currentHost != CampusEndpoints.CAS_HOST &&
+                                !saved &&
+                                !autoCompleting
+                            ) {
+                                val casRaw = CookieManager.getInstance()
+                                    .getCookie(CampusEndpoints.AUTH_SERVER_LOGIN_URL)
+                                    .orEmpty()
+                                val hasTicket = cookieNamesOf(casRaw)
+                                    .any { it in target.requiredAnyCookieNames }
+                                if (hasTicket) {
+                                    autoCompleting = true
+                                    statusIsError = false
+                                    statusMessage = "统一认证已完成，正在保存…"
+                                    view?.postDelayed({ completeLogin() }, 500)
+                                }
+                            }
                         }
 
                         override fun onReceivedError(
@@ -374,7 +407,7 @@ fun LoginWebViewScreen(
                         scope.launch {
                             val manager = CookieManager.getInstance()
                             manager.setAcceptCookie(true)
-                            val hosts = linkedSetOf(primaryHost)
+                            val hosts = linkedSetOf(primaryHost, CampusEndpoints.CAS_HOST)
                             target.extraCookieUrls.mapNotNullTo(hosts) { Uri.parse(it).host }
                             hosts.filter { it.isNotBlank() }.forEach { host ->
                                 val rows = runCatching {

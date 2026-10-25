@@ -68,10 +68,14 @@ fun MoreScreen(
     val groups = listOf(
         "账号与同步" to listOf(
             MoreItem(
-                badge = "教",
+                badge = "同",
                 badgeColor = TealPrimary,
-                title = "教务系统",
-                subtitle = if (loggedIn) "统一认证会话已加密保存" else "登录后同步课表、成绩、考试与电费",
+                title = "统一身份认证",
+                subtitle = if (loggedIn) {
+                    "一次登录 · 课表/成绩/电费/校园卡共用"
+                } else {
+                    "登录一次后，所有校内系统自动授权"
+                },
                 trailing = if (loggedIn) "已登录" else "去登录"
             ) { onNavigate(Routes.LOGIN) },
             MoreItem(

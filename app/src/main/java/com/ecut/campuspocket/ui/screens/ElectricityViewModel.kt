@@ -51,7 +51,7 @@ class ElectricityViewModel(
                 onFailure = { error ->
                     needsLogin = error is SessionExpiredException
                     message = if (needsLogin) {
-                        "宿舍缴费登录已过期，请重新登录"
+                        "统一认证已过期，重新登录一次即可恢复课表/电费/校园卡"
                     } else {
                         "同步失败：${error.message ?: "请检查校园网连接"}"
                     }

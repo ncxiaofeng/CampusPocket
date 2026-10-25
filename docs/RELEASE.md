@@ -54,9 +54,11 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
   或把仓库镜像到 **Gitee（码云）**。Gitee 国内直连、有 Releases，适合作为主仓库；
   公开仓库可能需要实名认证。
 - 蓝奏云适合非技术用户，但没有版本历史 / API / 自动更新，链接也可能失效，不适合作为唯一来源。
-- 如果以后做 App 内“检查更新”：用 GitHub / Gitee Releases API；蓝奏云没有 API。
+- App 内「关于 冻小梨」已内置检查更新：读取 GitHub Releases 最新版并与 `versionName` 比较；
+  GitHub 不可达时引导用户走蓝奏云。每次发版记得同步更新 `data/AppLinks.kt` 里的蓝奏云地址
+  （蓝奏云直链随文件变化；如需稳定入口，可改成固定的分享页 / 文件夹链接）。
 - 发布纪律：`versionCode` 递增、`versionName` 更新、始终用同一个 release keystore 签名；
-  不要把 `.jks` / `keystore.properties` 提交到公开仓库。
+  不要把 `.jks` / `keystore.properties` / `local.properties` 提交到公开仓库。
 
 ### 0.4.0 蓝奏云镜像（2026-10-24）
 

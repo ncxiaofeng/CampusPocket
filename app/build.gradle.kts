@@ -15,6 +15,27 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+/**
+ * 第三方 H5 的签名常量不进入公开仓库。
+ *
+ * 在 local.properties（已被 gitignore）里配置：
+ *   ujing.hmac.key=...
+ *   electricity.operator.pwd=...
+ * 未配置时对应功能会给出明确错误，不影响其它模块。
+ */
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        FileInputStream(localPropertiesFile).use { load(it) }
+    }
+}
+val ujingHmacKey = localProperties.getProperty("ujing.hmac.key").orEmpty()
+val electricityOperatorPwd =
+    localProperties.getProperty("electricity.operator.pwd").orEmpty()
+
+fun buildConfigString(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
 android {
     namespace = "com.ecut.campuspocket"
     compileSdk = 35
@@ -28,6 +49,13 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
+
+        buildConfigField("String", "UJING_HMAC_KEY", buildConfigString(ujingHmacKey))
+        buildConfigField(
+            "String",
+            "ELECTRICITY_OPERATOR_PWD",
+            buildConfigString(electricityOperatorPwd)
+        )
     }
 
     signingConfigs {

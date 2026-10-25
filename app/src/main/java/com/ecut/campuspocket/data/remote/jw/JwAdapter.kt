@@ -1,6 +1,7 @@
 package com.ecut.campuspocket.data.remote.jw
 
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -113,11 +114,32 @@ data class JwNotice(
  */
 class JwAdapter(
     private val client: OkHttpClient,
+    private val ssoManager: CasSsoManager? = null,
     /** 校内直连 `http://172.20.130.13`，校外走零信任 WebVPN 代理。 */
     private val baseUrlProvider: suspend () -> String
 ) {
 
+    @Volatile
+    private var lastFailedBootstrapAt = 0L
+
     private suspend fun baseUrl(): String = baseUrlProvider()
+
+    /**
+     * 直连教务的 JSESSIONID 过期时，用 CAS 主凭据静默换票。
+     *
+     * 只有校内直连才能这么做；WebVPN 代理域有自己的会话，换票应该在门户里完成。
+     * 失败后 30 秒内不再重试，避免主凭据过期时每个同步项都打一遍 CAS。
+     */
+    private suspend fun bootstrapDirectSession(): Boolean {
+        val manager = ssoManager ?: return false
+        val base = runCatching { baseUrl() }.getOrNull() ?: return false
+        if (base != CampusEndpoints.JW_BASE_URL) return false
+        val now = System.currentTimeMillis()
+        if (now - lastFailedBootstrapAt < BOOTSTRAP_RETRY_COOLDOWN_MS) return false
+        val ok = manager.ensureServiceSession(CampusEndpoints.JW_SSO_URL)
+        if (!ok) lastFailedBootstrapAt = now
+        return ok
+    }
 
     suspend fun fetchSchedule(): JwScheduleResult = withContext(Dispatchers.IO) {
         val page = get(SCHEDULE_PAGE)
@@ -347,20 +369,37 @@ class JwAdapter(
 
     private suspend fun get(path: String): String {
         val base = baseUrl()
+        val first = getRaw(base + path, base)
+        if (!first.sessionExpired) return first.body
+
+        // 校内直连时可以用 CASTGC 自动续会话；代理模式不在这里处理。
+        if (bootstrapDirectSession()) {
+            val second = getRaw(base + path, base)
+            if (!second.sessionExpired) return second.body
+        }
+        throw SessionExpiredException()
+    }
+
+    private suspend fun getRaw(url: String, base: String): RawResponse {
         val request = Request.Builder()
-            .url(base + path)
+            .url(url)
             .header("User-Agent", CampusEndpoints.DESKTOP_USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .header("Referer", base + "/jwglxt/xtgl/index_initMenu.html?jsdm=xs")
             .get()
             .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("教务系统返回 ${response.code}")
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) return RawResponse("", true)
+                if (!response.isSuccessful) {
+                    throw IOException("教务系统返回 ${response.code}")
+                }
+                val responseBody = response.body?.string().orEmpty()
+                RawResponse(responseBody, looksLikeLogin(responseBody))
             }
-            val responseBody = response.body?.string().orEmpty()
-            if (looksLikeLogin(responseBody)) throw SessionExpiredException()
-            return responseBody
+        } catch (_: SessionExpiredException) {
+            // casHttpClient 的拦截器发现回跳 CAS 时会直接抛出，等价于会话过期。
+            RawResponse("", true)
         }
     }
 
@@ -378,6 +417,22 @@ class JwAdapter(
         refererPath: String
     ): String {
         val base = baseUrl()
+        val first = postRaw(base, path, body, refererPath)
+        if (!first.sessionExpired) return first.body
+
+        if (bootstrapDirectSession()) {
+            val second = postRaw(base, path, body, refererPath)
+            if (!second.sessionExpired) return second.body
+        }
+        throw SessionExpiredException("教务会话已失效")
+    }
+
+    private suspend fun postRaw(
+        base: String,
+        path: String,
+        body: FormBody,
+        refererPath: String
+    ): RawResponse {
         val request = Request.Builder()
             .url(base + path)
             .post(body)
@@ -388,19 +443,26 @@ class JwAdapter(
             .header("Origin", base)
             .header("Referer", base + refererPath)
             .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("教务系统返回 ${response.code}")
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) return RawResponse("", true)
+                if (!response.isSuccessful) {
+                    throw IOException("教务系统返回 ${response.code}")
+                }
+                val text = response.body?.string().orEmpty()
+                if (text.isBlank()) return RawResponse("", true)
+                // 公告正文里可能出现“统一身份认证”等字样，JSON 响应只看结构，不按正文关键词误判。
+                val trimmed = text.trimStart()
+                val jsonLike = trimmed.startsWith("{") || trimmed.startsWith("[")
+                if (!jsonLike && looksLikeLogin(text)) return RawResponse(text, true)
+                RawResponse(text, false)
             }
-            val text = response.body?.string().orEmpty()
-            if (text.isBlank()) throw SessionExpiredException()
-            // 公告正文里可能出现“统一身份认证”等字样，JSON 响应只看结构，不按正文关键词误判。
-            val trimmed = text.trimStart()
-            val jsonLike = trimmed.startsWith("{") || trimmed.startsWith("[")
-            if (!jsonLike && looksLikeLogin(text)) throw SessionExpiredException()
-            return text
+        } catch (_: SessionExpiredException) {
+            RawResponse("", true)
         }
     }
+
+    private data class RawResponse(val body: String, val sessionExpired: Boolean)
 
     private fun parseObject(json: String): JsonObject {
         return try {
@@ -600,6 +662,7 @@ class JwAdapter(
     }
 
     companion object {
+        private const val BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000L
         private const val SCHEDULE_PAGE =
             "/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N253508&layout=default"
         private const val SCHEDULE_API = "/jwglxt/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N253508"

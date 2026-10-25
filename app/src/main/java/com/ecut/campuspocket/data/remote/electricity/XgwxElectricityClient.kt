@@ -1,6 +1,7 @@
 package com.ecut.campuspocket.data.remote.electricity
 
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -32,13 +33,12 @@ data class XgwxSnapshot(
  */
 class XgwxElectricityClient(
     private val client: OkHttpClient,
-    private val baseUrl: String = CampusEndpoints.ELECTRICITY_H5_BASE
+    private val baseUrl: String = CampusEndpoints.ELECTRICITY_H5_BASE,
+    private val ssoManager: CasSsoManager? = null
 ) {
 
     suspend fun fetchSnapshot(): XgwxSnapshot = withContext(Dispatchers.IO) {
-        val indexHtml = get(CampusEndpoints.ELECTRICITY_INDEX_URL)
-        val userId = Regex("""userid=(\d+)""").find(indexHtml)?.groupValues?.get(1)
-            ?: throw SessionExpiredException("宿舍缴费会话已失效")
+        val userId = loadIndexUserId()
         val houseJson = postForm(
             path = "/app/app/api/user/searchBindHouseListForMoney",
             body = FormBody.Builder().add("userid", userId).build(),
@@ -69,6 +69,26 @@ class XgwxElectricityClient(
             dailyUsage = usage
         )
     }
+
+    /**
+     * 读取宿舍缴费首页里的 userid。
+     *
+     * 会话过期时页面会 302 到 CAS 登录页，拿不到 userid。
+     * 此时用本机保存的 CASTGC 静默换票，再重试一次，用户不需要重新登录。
+     */
+    private suspend fun loadIndexUserId(): String {
+        val first = get(CampusEndpoints.ELECTRICITY_INDEX_URL)
+        extractUserId(first)?.let { return it }
+
+        if (ssoManager?.ensureServiceSession(CampusEndpoints.ELECTRICITY_INDEX_URL) == true) {
+            val second = get(CampusEndpoints.ELECTRICITY_INDEX_URL)
+            extractUserId(second)?.let { return it }
+        }
+        throw SessionExpiredException("统一认证已过期，请重新登录")
+    }
+
+    private fun extractUserId(html: String): String? =
+        Regex("""userid=(\d+)""").find(html)?.groupValues?.get(1)
 
     private fun selectMeter(houses: JsonArray): MeterSelection? {
         houses.forEach { houseElement ->

@@ -1,5 +1,7 @@
 package com.ecut.campuspocket.network
 
+import com.ecut.campuspocket.BuildConfig
+
 /**
  * 登录目标描述：WebView 打开哪个入口、抓哪些域名的 Cookie、如何判断登录完成。
  */
@@ -27,7 +29,15 @@ data class LoginTarget(
 
 object CampusEndpoints {
     const val SYSTEM_JW = "ecut_jw"
+    /** 零信任 aTrust 登录态（与直接访问的 CAS 主凭据分开保存）。 */
     const val SYSTEM_CAS = "ecut_cas"
+    /**
+     * 统一身份认证主凭据（authserver.ecut.edu.cn 的 CASTGC）。
+     *
+     * 这是唯一真正需要“登录一次”的凭证：教务 / 电费 / 办事大厅 / 一卡通
+     * 都是 CAS 的 service，只要 CASTGC 有效就能静默换票。
+     */
+    const val SYSTEM_CAS_MASTER = "ecut_cas_master"
     const val SYSTEM_ELECTRICITY = "ecut_electricity"
     /** 零信任 WebVPN 代理会话（从门户里打开“新教务管理系统”后获得）。 */
     const val SYSTEM_JW_PROXY = "ecut_jw_proxy"
@@ -51,7 +61,11 @@ object CampusEndpoints {
     const val JW_PROXY_BASE_URL = "https://172-20-130-13.atrust.ecut.edu.cn"
 
     /** CAS 本体，用于补充 CASTGC 等 Cookie。 */
+    const val CAS_HOST = "authserver.ecut.edu.cn"
     const val AUTH_SERVER_LOGIN_URL = "https://authserver.ecut.edu.cn/authserver/login"
+
+    /** CAS 有效主凭据的 Cookie 名（小写）。 */
+    val CAS_TICKET_COOKIE_NAMES = setOf("castgc", "tgc", "mod_auth_cas")
 
     /**
      * 金智 SSO 入口，登录后落到“个人课表查询”。
@@ -94,13 +108,39 @@ object CampusEndpoints {
         "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36"
 
+    /**
+     * 统一身份认证登录：只拿 CASTGC，不绑定任何具体业务系统。
+     * 登录一次后，教务 / 电费 / 办事大厅 / 一卡通都由 [CasSsoManager] 静默换票。
+     */
+    val CAS_LOGIN = LoginTarget(
+        systemId = SYSTEM_CAS_MASTER,
+        title = "统一身份认证",
+        // 带一个公开可访问的 service：登录成功后 CAS 会落到办事大厅一卡通页，
+        // 既完成主凭据保存，也顺带建立 ehall 会话；校外同样可用。
+        startUrl = AUTH_SERVER_LOGIN_URL +
+            "?service=" +
+            java.net.URLEncoder.encode(EHALL_CARD_SERVICE_URL, "UTF-8"),
+        primaryHost = CAS_HOST,
+        extraCookieUrls = listOf(AUTH_SERVER_LOGIN_URL),
+        requiredPrimaryCookie = null,
+        primaryPathPrefix = null,
+        requiredAnyCookieNames = CAS_TICKET_COOKIE_NAMES,
+        // 保留 WebView Cookie：CAS 登录页与后续 service 跳转在同一个 WebView 里完成。
+        clearWebViewCookiesAfterSave = false,
+        preloadStoredCookies = true,
+        helperText = "一次登录后，课表、成绩、考试、教室、电费、校园卡和办事大厅共用同一个统一认证会话。"
+    )
+
     val JW_LOGIN = LoginTarget(
         systemId = SYSTEM_JW,
         title = "教务系统登录",
         startUrl = JW_SSO_URL,
         primaryHost = "172.20.130.13",
         extraCookieUrls = listOf(AUTH_SERVER_LOGIN_URL),
-        requiredPrimaryCookie = "jsessionid"
+        requiredPrimaryCookie = "jsessionid",
+        // 已有 CASTGC 时直接静默 SSO，不再让用户重复输入密码。
+        preloadStoredCookies = true,
+        helperText = "已登录统一身份认证时，这里会自动完成教务授权，无需再次输入密码。"
     )
 
     /** 网上办事大厅（ehall），聚合教务、校园卡、通知等官方应用。 */
@@ -111,6 +151,11 @@ object CampusEndpoints {
     const val EHALL_CARD_URL =
         "https://ehall.ecut.edu.cn/psfw/sys/psxykapp/*default/index.do" +
             "?EMAP_LANG=zh&THEME=indigo#/xykxx"
+
+    /** 一卡通的 CAS service 地址（去掉前端路由 #/xykxx，服务端不接收 fragment）。 */
+    const val EHALL_CARD_SERVICE_URL =
+        "https://ehall.ecut.edu.cn/psfw/sys/psxykapp/*default/index.do" +
+            "?EMAP_LANG=zh&THEME=indigo"
 
     /** U净洗衣后端（H5 与原生 App 共用）。 */
     const val UJING_BASE_URL = "https://phoenix.ujing.online:443/api/v1"
@@ -123,10 +168,12 @@ object CampusEndpoints {
 
     /** 宿舍水电缴费 H5（今日校园“宿舍缴费”里的学生宿舍缴费）。 */
     const val ELECTRICITY_H5_BASE = "https://xgwx.ecut.edu.cn"
-    const val ELECTRICITY_INDEX_URL =
+    // operatorPwd 是宿舍缴费 H5 的系统参数，公开仓库中不写死；
+    // 构建时从 local.properties 的 electricity.operator.pwd 注入。
+    val ELECTRICITY_INDEX_URL =
         "https://xgwx.ecut.edu.cn/app/wechat/index.jsp" +
             "?appId=wx3be3089d48d67c4e&operatorId=admin" +
-            "&operatorPwd=REDACTED"
+            "&operatorPwd=" + BuildConfig.ELECTRICITY_OPERATOR_PWD
 
     val ELECTRICITY_LOGIN = LoginTarget(
         systemId = SYSTEM_ELECTRICITY,
@@ -136,7 +183,9 @@ object CampusEndpoints {
         extraCookieUrls = listOf(AUTH_SERVER_LOGIN_URL),
         requiredPrimaryCookie = "jsessionid",
         primaryPathPrefix = "/app",
-        helperText = "登录后可在电费页同步电表余额与每日用电量。"
+        // 已有 CASTGC 时由 CAS 自动换票，直接落到宿舍缴费页。
+        preloadStoredCookies = true,
+        helperText = "已登录统一身份认证时，这里会自动完成宿舍缴费授权，无需再次输入密码。"
     )
 
     val ATRUST_LOGIN = LoginTarget(

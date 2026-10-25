@@ -95,6 +95,7 @@
 
 - H5 主机：`https://xgwx.ecut.edu.cn`，入口：
   `GET /app/wechat/index.jsp?appId=wx3be3089d48d67c4e&operatorId=admin&operatorPwd=<固定系统参数>`
+  （实现从 `local.properties` 的 `electricity.operator.pwd` 注入到 `BuildConfig`，公开仓库不含明文）
 - 登录：CAS（authserver.ecut.edu.cn），与教务共用统一认证；登录后 xgwx 设置 `JSESSIONID`。
 - 绑定宿舍 / 电表余额：
   `POST /app/app/api/user/searchBindHouseListForMoney`
@@ -215,6 +216,30 @@
 - 注意：该网页登录只完成零信任认证，不会在系统层建立 VPN 隧道；课表/成绩接口仍要求校园网可达。
 
 ## 统一身份认证（CAS / aTrust）
+
+### 一次登录，全站共用（2026-10-25 起）
+
+学校所有需要登录的系统共用 `authserver.ecut.edu.cn` 的 **CASTGC**，
+它们只是 CAS 的不同 service：
+
+| 系统 | service 入口 |
+| --- | --- |
+| 教务（课表/成绩/考试/教室/公告） | `172.20.130.13/sso/jziotlogin?url=...` |
+| 宿舍电费 | `xgwx.ecut.edu.cn/app/wechat/index.jsp?...` |
+| 网上办事大厅 / 一卡通 | `ehall.ecut.edu.cn/psfw/sys/psxykapp/...` |
+
+实现：
+
+- 任意登录页（JW / 电费 / ehall / 零信任代理）出现 `CASTGC` 都会写入
+  `auth_credentials` 的 `ecut_cas_master`（只保留 ticket 本身，不复制代理域的 `route`/`JSESSIONID`）。
+- `CasSsoManager.ensureServiceSession(serviceUrl)`：
+  `GET /authserver/login?service=<encoded serviceUrl>` → CAS 302 回 service 并带 ticket
+  → service 下发自己的 `JSESSIONID`，由 `CampusCookieJar` 自动落库。
+- 各原生客户端在“会话过期”时自动换票并重试一次：
+  `JwAdapter`（仅校内直连）、`XgwxElectricityClient`、`CampusCardClient`。
+- 所有“去登录”统一进入 `Routes.LOGIN` → `CampusEndpoints.CAS_LOGIN`，
+  登录成功后落到 ehall 一卡通页并自动保存 CASTGC，不再按模块分别登录。
+- 零信任代理域名下拿到的 `CASTGC` 会镜像到 CAS 主域，先登零信任也能解锁电费/校园卡。
 
 入口（用户提供）：
 

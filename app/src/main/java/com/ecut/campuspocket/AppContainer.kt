@@ -20,6 +20,7 @@ import com.ecut.campuspocket.network.CampusCookieJar
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CampusNetworkState
 import com.ecut.campuspocket.network.CampusNetworkStatus
+import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.ProxySessionRequiredException
 import com.ecut.campuspocket.network.SessionExpiredInterceptor
 import okhttp3.OkHttpClient
@@ -81,7 +82,7 @@ object AppContainer {
 
     val xgwxElectricityClient: XgwxElectricityClient by lazy {
         // 宿舍缴费过期时会 302 到 CAS；允许跟随重定向，用本地 CASTGC 自动换票。
-        XgwxElectricityClient(baseHttpClient)
+        XgwxElectricityClient(baseHttpClient, ssoManager = casSsoManager)
     }
 
     val xgwxElectricityRepository: XgwxElectricityRepository by lazy {
@@ -108,8 +109,16 @@ object AppContainer {
             .build()
     }
 
+    /**
+     * CAS 单点登录：CASTGC 是唯一的“总凭证”，
+     * 教务 / 电费 / 办事大厅 / 一卡通各自过期时都从这里静默换票。
+     */
+    val casSsoManager: CasSsoManager by lazy {
+        CasSsoManager(authRepository, baseHttpClient)
+    }
+
     val jwAdapter: JwAdapter by lazy {
-        JwAdapter(casHttpClient) {
+        JwAdapter(casHttpClient, ssoManager = casSsoManager) {
             val state = CampusNetworkStatus.state.value
             val proxy = authRepository.getCredential(CampusEndpoints.SYSTEM_JW_PROXY)
             when {
@@ -130,7 +139,7 @@ object AppContainer {
     }
 
     val campusCardClient: CampusCardClient by lazy {
-        CampusCardClient(baseHttpClient)
+        CampusCardClient(baseHttpClient, ssoManager = casSsoManager)
     }
 
     val ujingClient: UjingClient by lazy {

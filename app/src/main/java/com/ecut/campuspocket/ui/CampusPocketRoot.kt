@@ -54,6 +54,7 @@ import com.ecut.campuspocket.navigation.Routes
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CampusNetworkState
 import com.ecut.campuspocket.network.CampusNetworkStatus
+import com.ecut.campuspocket.ui.screens.AboutScreen
 import com.ecut.campuspocket.ui.screens.CampusCardScreen
 import com.ecut.campuspocket.ui.screens.CampusWebPageScreen
 import com.ecut.campuspocket.ui.screens.ClassroomsScreen
@@ -93,8 +94,9 @@ fun CampusPocketRoot() {
     val currentRoute = backStackEntry?.destination?.route
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val casCredential by AppContainer.authRepository
-        .observeCredential(CampusEndpoints.SYSTEM_JW)
+    // 统一身份认证主凭据（CASTGC）：真正决定“是否已登录”的那一个。
+    val casMasterCredential by AppContainer.authRepository
+        .observeCredential(CampusEndpoints.SYSTEM_CAS_MASTER)
         .collectAsStateWithLifecycle(initialValue = null)
     val vpnCredential by AppContainer.authRepository
         .observeCredential(CampusEndpoints.SYSTEM_CAS)
@@ -209,13 +211,15 @@ fun CampusPocketRoot() {
                             Toast.makeText(context, "本地登录数据已清除", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    loggedIn = casCredential != null,
+                    loggedIn = casMasterCredential != null,
                     vpnLoggedIn = vpnCredential != null
                 )
             }
 
             composable(Routes.LOGIN) {
+                // 所有模块的“去登录”都走同一个统一身份认证入口。
                 LoginWebViewScreen(
+                    target = CampusEndpoints.CAS_LOGIN,
                     onBack = {
                         SessionState.clear()
                         navController.popBackStack()
@@ -244,8 +248,9 @@ fun CampusPocketRoot() {
                 )
             }
             composable(Routes.ELECTRICITY_LOGIN) {
+                // 电费不再单独登录：统一身份认证一次即可，电费会话由 CAS 静默换票。
                 LoginWebViewScreen(
-                    target = CampusEndpoints.ELECTRICITY_LOGIN,
+                    target = CampusEndpoints.CAS_LOGIN,
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -421,11 +426,9 @@ fun CampusPocketRoot() {
                 )
             }
             composable(Routes.ABOUT) {
-                PlaceholderScreen(
-                    title = "关于 冻小梨",
-                    badge = "C",
-                    description = "冻小梨 · 纯本地校园聚合 App，面向东华理工大学校园网环境。",
-                    onBack = { navController.popBackStack() }
+                AboutScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenPrivacy = { navController.navigate(Routes.PRIVACY) }
                 )
             }
             }
@@ -484,7 +487,7 @@ private fun SessionExpiredBanner(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "课表与成绩需要重新授权",
+                text = "重新登录一次即可恢复课表/电费/校园卡",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
                 modifier = Modifier.weight(1f)
