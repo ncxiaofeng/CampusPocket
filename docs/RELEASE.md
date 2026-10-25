@@ -44,9 +44,9 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 产物：
 
 - `app/build/outputs/apk/debug/app-debug.apk`
-- `app/build/outputs/apk/release/app-release.apk`（配置签名后；0.4.0 实测约 21 MB）
+- `app/build/outputs/apk/release/app-release.apk`（配置签名后；0.4.1 实测约 21 MB）
 
-## 分发建议（2026-10-24）
+## 分发建议（2026-10-25）
 
 - **首选：GitHub / Gitee Releases + 蓝奏云镜像**。Release 页放 APK + 更新说明，版本号清晰；
   蓝奏云给国内同学一个直连下载。两者互补：Release 负责版本历史 / 自动更新，蓝奏云负责“发个链接就能下”。
@@ -60,11 +60,19 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 - 发布纪律：`versionCode` 递增、`versionName` 更新、始终用同一个 release keystore 签名；
   不要把 `.jks` / `keystore.properties` / `local.properties` 提交到公开仓库。
 
+### 0.4.1 蓝奏云镜像（2026-10-25）
+
+- 固定文件夹（提取码 `c3bc`）：https://ncxiaofeng.lanzoub.com/b0j1u822d
+  - 内含 `CampusPocket-0.4.1.zip`（APK + SHA256 + 安装说明），以后发版只需上传新 ZIP 并移入该文件夹。
+- 免费账号已不支持直接分享 APK（打开会提示“非会员不支持分享 apk 文件”），因此国内镜像统一提供 ZIP；
+  原始 APK 放在 GitHub Release。
+- 上传脚本只保存在本地 `_analysis/lanzou_upload.py`，Cookie 不入库；Cookie 过期后重新导出。
+  文件夹 ID `14140863`，可用 `task=20&folder_id=14140863&file_id=<新文件ID>` 把新 ZIP 移入。
+
 ### 0.4.0 蓝奏云镜像（2026-10-24）
 
 - APK：https://ncxiaofeng.lanzoub.com/i38c64d7sg6f （20.4 MB；免费账号在手机端分享 APK 可能受限）
 - ZIP（含 APK + SHA256 + 安装说明）：https://ncxiaofeng.lanzoub.com/ic6YC4d7si7i （10.2 MB，手机友好）
-- 上传脚本只保存在本地 `_analysis/lanzou_upload.py`，Cookie 不入库；Cookie 过期后重新导出。
 
 ## 功能边界
 
@@ -76,6 +84,13 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 
 ## 版本
 
+- 0.4.1（2026-10-25）：
+  - 统一身份认证单点登录：一次登录后，课表、成绩、考试、空闲教室、通知公告、电费、校园卡、
+    办事大厅共用同一个 CAS 会话；各系统会话过期时自动静默换票，不再逐模块重新登录。
+  - 修复进入电费页仍提示“登录已过期”、重新登录又回到统一认证页的问题。
+  - 新增“关于 冻小梨”：检查更新、GitHub 项目主页 / Releases、蓝奏云安装包下载、版本信息。
+  - 构建参数脱敏：U净 HMAC key 与宿舍缴费 operatorPwd 改为 `local.properties` → `BuildConfig`
+    注入，公开仓库不含明文。
 - 0.4.0（2026-10-24）：
   - 新增 U净洗衣：手机号 + 短信验证码登录（复现 H5 内置 HMAC 签名）；广兰 / 青岚 / 抚州校区切换；
     从历史订单反查“最近使用”（16栋-1）；波轮 / 滚筒空闲数、等待时间、洗护价格、运行中 / 历史订单；

@@ -321,16 +321,10 @@ private fun LinksCard(onOpenUrl: (String) -> Unit) {
                 )
                 ThinDivider(Modifier.padding(start = 16.dp))
                 LinkRow(
-                    title = "蓝奏云 · APK",
-                    url = AppLinks.LANZOU_APK,
-                    subtitle = "国内无法访问 GitHub 时使用",
-                    onOpenUrl = onOpenUrl
-                )
-                ThinDivider(Modifier.padding(start = 16.dp))
-                LinkRow(
-                    title = "蓝奏云 · ZIP",
-                    url = AppLinks.LANZOU_ZIP,
-                    subtitle = "含 APK、SHA256 与安装说明",
+                    title = "蓝奏云 · 安装包（ZIP）",
+                    url = AppLinks.LANZOU_FOLDER,
+                    subtitle = "提取码 ${AppLinks.LANZOU_FOLDER_PWD} · " +
+                        "含 APK、SHA256 与安装说明",
                     onOpenUrl = onOpenUrl
                 )
             }
@@ -421,6 +415,12 @@ private fun ReleaseDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "蓝奏云提取码：${AppLinks.LANZOU_FOLDER_PWD}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         },
         confirmButton = {
@@ -438,7 +438,7 @@ private fun ReleaseDialog(
             Row {
                 TextButton(
                     onClick = {
-                        onOpenUrl(AppLinks.LANZOU_APK)
+                        onOpenUrl(AppLinks.LANZOU_FOLDER)
                         onDismiss()
                     }
                 ) { Text("蓝奏云下载") }

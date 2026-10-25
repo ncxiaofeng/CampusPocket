@@ -7,8 +7,8 @@
 ## 下载
 
 - GitHub Releases：<https://github.com/ncxiaofeng/CampusPocket/releases>
-- 蓝奏云 APK（国内无法访问 GitHub 时）：<https://ncxiaofeng.lanzoub.com/i38c64d7sg6f>
-- 蓝奏云 ZIP（含 APK、SHA256 与安装说明）：<https://ncxiaofeng.lanzoub.com/ic6YC4d7si7i>
+- 蓝奏云固定文件夹（提取码 `c3bc`）：<https://ncxiaofeng.lanzoub.com/b0j1u822d>
+  - 内含各版本 ZIP（APK + SHA256 + 安装说明）；免费蓝奏云账号不支持直接分享 APK，所以国内镜像提供 ZIP。
 
 App 内「更多 → 关于 冻小梨」也提供检查更新、项目地址和蓝奏云下载入口。
 
@@ -71,7 +71,7 @@ keyAlias=campuspocket
 keyPassword=******
 ```
 
-然后 `./gradlew assembleRelease` 会输出已签名的 `app-release.apk`（0.4.0 约 21 MB，R8 + 资源压缩）。
+然后 `./gradlew assembleRelease` 会输出已签名的 `app-release.apk`（0.4.1 约 21 MB，R8 + 资源压缩）。
 
 > 正式签名使用项目外的专用 `release.jks`（`CampusPocket-keys/`）；`keystore.properties` 不入库，
 > 请离线备份密钥与密码。换签名后旧调试包无法覆盖安装。
