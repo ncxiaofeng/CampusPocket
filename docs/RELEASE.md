@@ -60,6 +60,19 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 - 发布纪律：`versionCode` 递增、`versionName` 更新、始终用同一个 release keystore 签名；
   不要把 `.jks` / `keystore.properties` / `local.properties` 提交到公开仓库。
 
+## GitHub Release 自动发布
+
+`.github/workflows/release.yml` 在推送 `v*` tag 时自动创建 GitHub Release：
+
+1. 把 `CampusPocket-<version>.apk` 推到临时分支 `release-assets`；
+2. 在 `main` 上打并推送 `v<version>` tag；
+3. 工作流从 `release-assets` 读取 APK，用 `docs/RELEASE_NOTES_<version>.md` 作为说明，
+   通过内置 `GITHUB_TOKEN` 创建 Release 并上传 APK；
+4. Release 资产已独立保存，之后可以删除 `release-assets` 分支，避免 20MB 二进制长期留在仓库里。
+
+> 工作流需要仓库 Actions 的 `GITHUB_TOKEN` 具有 `contents: write` 权限（`permissions` 已声明）。
+> 如果仓库设置把默认权限改成只读，需要改成 Read and write 或使用 PAT。
+
 ### 0.4.1 蓝奏云镜像（2026-10-25）
 
 - 固定文件夹（提取码 `c3bc`）：https://ncxiaofeng.lanzoub.com/b0j1u822d
