@@ -1,11 +1,17 @@
 package com.ecut.campuspocket.ui.screens
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ecut.campuspocket.data.remote.ujing.UjingCampus
 import com.ecut.campuspocket.data.remote.ujing.UjingDeviceTag
@@ -67,6 +74,36 @@ fun UjingScreen(
     viewModel: UjingViewModel = viewModel(factory = UjingViewModel.Factory)
 ) {
     val loggedIn = viewModel.hasSession && !viewModel.needsLogin
+    val context = LocalContext.current
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) {
+            viewModel.useCurrentLocation()
+        } else {
+            viewModel.reportLocationDenied()
+        }
+    }
+    val onUseCurrentLocation: () -> Unit = {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            viewModel.useCurrentLocation()
+        } else {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                )
+            )
+        }
+    }
 
     Column(
         modifier = modifier
@@ -77,7 +114,7 @@ fun UjingScreen(
             onBack = onBack,
             loggedIn = loggedIn,
             isBusy = viewModel.isBusy,
-            campusName = viewModel.selectedCampus.name,
+            campusName = viewModel.locationLabel,
             onRefresh = viewModel::refresh
         )
 
@@ -101,9 +138,11 @@ fun UjingScreen(
                 recentStores = viewModel.recentStores,
                 campuses = viewModel.campuses,
                 selectedCampus = viewModel.selectedCampus,
+                usingDeviceLocation = viewModel.usingDeviceLocation,
                 isBusy = viewModel.isBusy,
                 isStoreLoading = viewModel.isStoreLoading,
                 message = viewModel.message,
+                onUseCurrentLocation = onUseCurrentLocation,
                 onSelectCampus = viewModel::selectCampus,
                 onSelectRecentStore = viewModel::selectRecentStore,
                 onSelectStore = viewModel::selectStore,
@@ -240,8 +279,8 @@ private fun UjingLoginContent(
         }
         item {
             Text(
-                text = "U净 的洗衣房分布在广兰 / 青岚校区，登录后可在顶部切换校区；本页只展示空闲数量、" +
-                    "等待时间与洗护价格，不会下单、不会支付。登录态保存在本机加密数据库，可随时退出。",
+                text = "U净 的洗衣房分布在广兰 / 青岚校区，默认按设备当前位置查最近楼栋，也可切换校区；" +
+                    "本页只展示空闲数量、等待时间与洗护价格，不会下单、不会支付。登录态保存在本机加密数据库，可随时退出。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -262,9 +301,11 @@ private fun UjingContent(
     recentStores: List<UjingStoreRef>,
     campuses: List<UjingCampus>,
     selectedCampus: UjingCampus,
+    usingDeviceLocation: Boolean,
     isBusy: Boolean,
     isStoreLoading: Boolean,
     message: String?,
+    onUseCurrentLocation: () -> Unit,
     onSelectCampus: (UjingCampus) -> Unit,
     onSelectRecentStore: (UjingStoreRef) -> Unit,
     onSelectStore: (UjingStore) -> Unit,
@@ -280,11 +321,21 @@ private fun UjingContent(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CampusChip(
+                    name = "当前位置",
+                    selected = usingDeviceLocation,
+                    onClick = onUseCurrentLocation
+                )
                 campuses.forEach { campus ->
                     CampusChip(
                         name = campus.name,
-                        selected = campus.name == selectedCampus.name,
+                        selected = !usingDeviceLocation && campus.name == selectedCampus.name,
                         onClick = { onSelectCampus(campus) }
                     )
                 }

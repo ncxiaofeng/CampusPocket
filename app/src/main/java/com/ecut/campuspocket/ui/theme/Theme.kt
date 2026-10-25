@@ -27,43 +27,49 @@ private val LightColors = lightColorScheme(
     onSecondaryContainer = SlateOnContainer,
     tertiary = BlueTertiary,
     tertiaryContainer = BlueContainer,
+    onTertiaryContainer = Color(0xFF160E67),
     background = AppBackground,
     onBackground = TextPrimary,
     surface = SurfaceLight,
     onSurface = TextPrimary,
-    surfaceVariant = Color(0xFFE6EEEC),
+    surfaceVariant = Color(0xFFE1EFEC),
     onSurfaceVariant = TextSecondary,
-    outline = Color(0xFF6F7977),
+    outline = Color(0xFF6F817D),
     outlineVariant = OutlineSoft,
-    error = ErrorRed
+    error = ErrorRed,
+    onError = Color.White
 )
 
 private val DarkColors = darkColorScheme(
     primary = TealDark,
-    onPrimary = TealOnContainer,
-    primaryContainer = Color(0xFF005049),
+    onPrimary = Color(0xFF003731),
+    primaryContainer = Color(0xFF115E56),
     onPrimaryContainer = TealContainer,
-    secondary = Color(0xFFB1CCC8),
-    onSecondary = SlateOnContainer,
-    secondaryContainer = Color(0xFF334B48),
-    onSecondaryContainer = SlateContainer,
+    secondary = Color(0xFFB9D2EA),
+    onSecondary = Color(0xFF123149),
+    secondaryContainer = Color(0xFF2A4357),
+    onSecondaryContainer = Color(0xFFD7E8F7),
+    tertiary = Color(0xFFC5C4FF),
+    tertiaryContainer = Color(0xFF3A3A85),
+    onTertiaryContainer = Color(0xFFE0E0FF),
     background = AppBackgroundDark,
-    onBackground = Color(0xFFDDE4E2),
+    onBackground = Color(0xFFE0EAE7),
     surface = SurfaceDark,
-    onSurface = Color(0xFFDDE4E2),
-    surfaceVariant = Color(0xFF3F4947),
-    onSurfaceVariant = Color(0xFFBEC9C6),
-    outline = Color(0xFF889390),
-    outlineVariant = Color(0xFF2A3230),
-    error = Color(0xFFFFB4AB)
+    onSurface = Color(0xFFE0EAE7),
+    surfaceVariant = Color(0xFF263634),
+    onSurfaceVariant = Color(0xFFB6C8C3),
+    outline = Color(0xFF849691),
+    outlineVariant = Color(0xFF2C3E3A),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005)
 )
 
 private val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(10.dp),
-    small = RoundedCornerShape(14.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(26.dp)
+    extraSmall = RoundedCornerShape(12.dp),
+    small = RoundedCornerShape(16.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(30.dp)
 )
 
 @Composable
@@ -76,8 +82,11 @@ fun CampusPocketTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            window.navigationBarColor = colorScheme.background.toArgb()
+            window.statusBarColor = Color.Transparent.toArgb()
+            window.navigationBarColor = Color.Transparent.toArgb()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !darkTheme
                 isAppearanceLightNavigationBars = !darkTheme && Build.VERSION.SDK_INT >= 26

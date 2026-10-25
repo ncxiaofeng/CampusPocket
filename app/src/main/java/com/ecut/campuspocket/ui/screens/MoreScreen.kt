@@ -17,7 +17,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +39,7 @@ import com.ecut.campuspocket.network.AtrustClient
 import com.ecut.campuspocket.ui.components.AppCard
 import com.ecut.campuspocket.ui.components.IconBadge
 import com.ecut.campuspocket.ui.components.SectionHeader
+import com.ecut.campuspocket.ui.components.liquidGlassBottomBarContentInset
 import com.ecut.campuspocket.ui.components.ThinDivider
 import com.ecut.campuspocket.ui.components.StatusDot
 import com.ecut.campuspocket.ui.theme.CourseBlue
@@ -139,7 +144,12 @@ fun MoreScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            end = 20.dp,
+            top = 18.dp,
+            bottom = 28.dp + liquidGlassBottomBarContentInset()
+        ),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item {
@@ -169,11 +179,11 @@ fun MoreScreen(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "同",
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                        Icon(
+                            imageVector = Icons.Outlined.Sync,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                     Spacer(Modifier.width(14.dp))
@@ -216,10 +226,13 @@ fun MoreScreen(
         item {
             AppCard(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)) {
                 Row(verticalAlignment = Alignment.Top) {
-                    Text(
-                        text = "🔒",
-                        fontSize = 15.sp,
-                        modifier = Modifier.padding(top = 1.dp)
+                    Icon(
+                        imageVector = Icons.Outlined.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(18.dp)
                     )
                     Spacer(Modifier.width(10.dp))
                     Column {

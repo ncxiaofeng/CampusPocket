@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.ecut.campuspocket.AppContainer
+import com.ecut.campuspocket.data.location.DeviceLocationProvider
 import com.ecut.campuspocket.data.remote.ujing.UJING_CAMPUSES
 import com.ecut.campuspocket.data.remote.ujing.UjingCampus
 import com.ecut.campuspocket.data.remote.ujing.UjingOrder
@@ -21,7 +22,8 @@ import com.ecut.campuspocket.network.SessionExpiredException
 import kotlinx.coroutines.launch
 
 class UjingViewModel(
-    private val repository: UjingRepository
+    private val repository: UjingRepository,
+    private val locationProvider: DeviceLocationProvider
 ) : ViewModel() {
 
     var hasSession by mutableStateOf(false)
@@ -43,6 +45,14 @@ class UjingViewModel(
 
     var selectedCampus by mutableStateOf(UJING_CAMPUSES.first())
         private set
+
+    /** 是否使用设备实际坐标查询附近洗衣房；手动切换校区后自动关闭。 */
+    var usingDeviceLocation by mutableStateOf(false)
+        private set
+
+    /** 顶部栏/校区选择器显示的定位来源。 */
+    val locationLabel: String
+        get() = if (usingDeviceLocation) "当前位置" else selectedCampus.name
 
     var stores by mutableStateOf<List<UjingStore>>(emptyList())
         private set
@@ -71,6 +81,8 @@ class UjingViewModel(
     init {
         viewModelScope.launch {
             hasSession = repository.hasSession()
+            // 如果天气页已经授权过定位，U净默认直接按当前位置查楼栋。
+            usingDeviceLocation = locationProvider.hasPermission()
             if (hasSession) refresh()
         }
     }
@@ -139,7 +151,8 @@ class UjingViewModel(
     }
 
     fun selectCampus(campus: UjingCampus) {
-        if (campus.name == selectedCampus.name) return
+        if (campus.name == selectedCampus.name && !usingDeviceLocation) return
+        usingDeviceLocation = false
         selectedCampus = campus
         selectedStore = null
         storeInfo = null
@@ -148,15 +161,41 @@ class UjingViewModel(
         refresh()
     }
 
+    /** 使用设备实际位置查询附近洗衣房（需要定位权限）。 */
+    fun useCurrentLocation() {
+        if (usingDeviceLocation && !isBusy) return
+        usingDeviceLocation = true
+        selectedStore = null
+        storeInfo = null
+        programInfo = null
+        waitMinutes = null
+        refresh()
+    }
+
+    fun reportLocationDenied() {
+        usingDeviceLocation = false
+        message = "未授予定位权限，继续使用${selectedCampus.name}"
+    }
+
     fun refresh() {
         if (isBusy) return
         viewModelScope.launch {
             isBusy = true
             message = null
             try {
+                val deviceLocation = if (usingDeviceLocation) {
+                    locationProvider.currentLocation()
+                } else {
+                    null
+                }
+                if (usingDeviceLocation && deviceLocation == null) {
+                    // 权限被撤销或系统没有可用定位时，回到当前选中的校区。
+                    usingDeviceLocation = false
+                    message = "定位失败，已回退到${selectedCampus.name}"
+                }
                 stores = repository.nearbyStores(
-                    selectedCampus.latitude,
-                    selectedCampus.longitude
+                    deviceLocation?.latitude ?: selectedCampus.latitude,
+                    deviceLocation?.longitude ?: selectedCampus.longitude
                 )
                 val target = selectedStore?.let { current ->
                     stores.firstOrNull { it.id == current.id } ?: current
@@ -264,7 +303,10 @@ class UjingViewModel(
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                UjingViewModel(AppContainer.ujingRepository)
+                UjingViewModel(
+                    repository = AppContainer.ujingRepository,
+                    locationProvider = AppContainer.deviceLocationProvider
+                )
             }
         }
     }

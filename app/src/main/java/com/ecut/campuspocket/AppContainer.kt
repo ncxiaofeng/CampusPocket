@@ -2,12 +2,14 @@ package com.ecut.campuspocket
 
 import android.content.Context
 import com.ecut.campuspocket.data.local.CampusDatabase
+import com.ecut.campuspocket.data.location.DeviceLocationProvider
 import com.ecut.campuspocket.data.remote.ElectricitySource
 import com.ecut.campuspocket.data.remote.electricity.XgwxElectricityClient
 import com.ecut.campuspocket.data.remote.card.CampusCardClient
 import com.ecut.campuspocket.data.remote.jw.JwAdapter
 import com.ecut.campuspocket.data.remote.library.LibrarySeatClient
 import com.ecut.campuspocket.data.remote.ujing.UjingClient
+import com.ecut.campuspocket.data.remote.weather.WeatherClient
 import com.ecut.campuspocket.data.repository.AuthRepository
 import com.ecut.campuspocket.data.repository.ElectricityRepository
 import com.ecut.campuspocket.data.repository.ExamRepository
@@ -140,6 +142,16 @@ object AppContainer {
 
     val campusCardClient: CampusCardClient by lazy {
         CampusCardClient(baseHttpClient, ssoManager = casSsoManager)
+    }
+
+    /** 公开天气接口，不需要登录态；复用同一个 OkHttp 连接池。 */
+    val weatherClient: WeatherClient by lazy {
+        WeatherClient(baseHttpClient)
+    }
+
+    /** 原生 LocationManager 定位，用于让天气使用设备实际位置。 */
+    val deviceLocationProvider: DeviceLocationProvider by lazy {
+        DeviceLocationProvider(requireContext())
     }
 
     val ujingClient: UjingClient by lazy {

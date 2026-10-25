@@ -3,26 +3,50 @@ package com.ecut.campuspocket.ui
 import android.net.Uri
 import android.webkit.CookieManager
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DirectionsRun
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.LocalLaundryService
+import androidx.compose.material.icons.outlined.LocalLibrary
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.PrivacyTip
+import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,9 +60,31 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ecut.campuspocket.ui.components.AppCard
+import com.ecut.campuspocket.ui.components.GlassBackdrop
+import com.ecut.campuspocket.ui.components.GlassOverlay
+import com.ecut.campuspocket.ui.components.IconBadge
+import com.ecut.campuspocket.ui.components.LiquidGlassBottomBar
+import com.ecut.campuspocket.ui.components.LiquidGlassTabItem
+import com.ecut.campuspocket.ui.components.liquidGlassBackdropSource
+import com.ecut.campuspocket.ui.components.rememberLiquidGlassBackdropState
+import com.ecut.campuspocket.ui.components.glassBodyBrush
+import com.ecut.campuspocket.ui.components.glassBorderBrush
+import com.ecut.campuspocket.ui.components.isGlassDark
+import com.ecut.campuspocket.ui.theme.ActionGreen
+import com.ecut.campuspocket.ui.theme.ActionGreenBright
+import com.ecut.campuspocket.ui.theme.ActionGreenDeep
+import com.ecut.campuspocket.ui.theme.TealPrimary
+import com.ecut.campuspocket.ui.theme.WarningAmber
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,13 +122,15 @@ import kotlinx.coroutines.launch
 private data class TabItem(
     val route: String,
     val label: String,
-    val icon: ImageVector
+    val icon: ImageVector,
+    val selectedIcon: ImageVector
 )
 
 private val tabs = listOf(
-    TabItem(Routes.TODAY, "首页", Icons.Filled.Home),
-    TabItem(Routes.SCHEDULE, "课表", Icons.Filled.DateRange),
-    TabItem(Routes.MORE, "更多", Icons.Filled.Menu)
+    TabItem(Routes.TODAY, "首页", Icons.Outlined.Home, Icons.Filled.Home),
+    TabItem(Routes.SCHEDULE, "课表", Icons.Outlined.DateRange, Icons.Filled.DateRange),
+    TabItem(Routes.CAMPUS_CARD, "校园卡", Icons.Outlined.CreditCard, Icons.Filled.CreditCard),
+    TabItem(Routes.MORE, "更多", Icons.Outlined.Menu, Icons.Filled.Menu)
 )
 
 private val topLevelRoutes = tabs.map { it.route }.toSet()
@@ -107,6 +155,10 @@ fun CampusPocketRoot() {
     val sessionExpired by SessionState.expired.collectAsStateWithLifecycle()
     val networkState by CampusNetworkStatus.state.collectAsStateWithLifecycle()
     var autoJumpHandled by rememberSaveable { mutableStateOf(false) }
+    var showQuickActions by rememberSaveable { mutableStateOf(false) }
+    val backdropState = rememberLiquidGlassBackdropState()
+    val layoutDirection = LocalLayoutDirection.current
+    val showBottomBar = currentRoute != null && currentRoute in topLevelRoutes
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         scope.launch { CampusNetworkStatus.refresh() }
@@ -130,6 +182,16 @@ fun CampusPocketRoot() {
         }
     }
 
+    fun openTab(route: String) {
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     // 原生教务接口与官方兜底页共用同一套地址选择：校内直连，校外走 WebVPN 代理。
     fun jwBaseUrl(): String = when {
         networkState is CampusNetworkState.OnCampus -> CampusEndpoints.JW_BASE_URL
@@ -137,30 +199,49 @@ fun CampusPocketRoot() {
         else -> CampusEndpoints.JW_BASE_URL
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+        containerColor = Color.Transparent,
         bottomBar = {
-            if (currentRoute != null && currentRoute in topLevelRoutes) {
-                CampusBottomBar(
-                    currentRoute = currentRoute,
-                    onSelect = { route ->
-                        navController.navigate(route) {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
+            if (showBottomBar) {
+                LiquidGlassBottomBar(
+                    tabs = tabs.map {
+                        LiquidGlassTabItem(
+                            label = it.label,
+                            icon = it.icon,
+                            selectedIcon = it.selectedIcon
+                        )
+                    },
+                    selectedIndex = tabs
+                        .indexOfFirst { it.route == currentRoute }
+                        .coerceAtLeast(0),
+                    onTabSelected = { index -> openTab(tabs[index].route) },
+                    onCenterClick = { showQuickActions = true },
+                    backdrop = backdropState
                 )
             }
         }
     ) { innerPadding ->
-        Column(
+        // 背景和页面内容放在同一个 Box 内，并记录到 GraphicsLayer 供底栏真实采样。
+        Box(
             modifier = Modifier
-                .padding(innerPadding)
                 .fillMaxSize()
+                .liquidGlassBackdropSource(backdropState)
         ) {
+            GlassBackdrop()
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        start = innerPadding.calculateStartPadding(layoutDirection),
+                        top = innerPadding.calculateTopPadding(),
+                        end = innerPadding.calculateEndPadding(layoutDirection),
+                        // 顶层页面让内容延伸到悬浮底栏后面，由页面自己预留底部空间；
+                        // 二级页面（底栏隐藏）仍按 Scaffold 的安全区正常收缩。
+                        bottom = if (showBottomBar) 0.dp
+                        else innerPadding.calculateBottomPadding()
+                    )
+            ) {
             if (networkState is CampusNetworkState.OffCampus &&
                 currentRoute != Routes.VPN_LOGIN &&
                 currentRoute != Routes.VPN_PORTAL
@@ -190,8 +271,8 @@ fun CampusPocketRoot() {
             composable(Routes.TODAY) {
                 TodayScreen(
                     onOpenElectricity = { navController.navigate(Routes.ELECTRICITY) },
-                    onOpenCampusCard = { navController.navigate(Routes.CAMPUS_CARD) },
-                    onOpenSchedule = { navController.navigate(Routes.SCHEDULE) },
+                    onOpenCampusCard = { openTab(Routes.CAMPUS_CARD) },
+                    onOpenSchedule = { openTab(Routes.SCHEDULE) },
                     vpnAuthenticated = vpnCredential != null
                 )
             }
@@ -200,7 +281,10 @@ fun CampusPocketRoot() {
             }
             composable(Routes.MORE) {
                 MoreScreen(
-                    onNavigate = { route -> navController.navigate(route) },
+                    onNavigate = { route ->
+                        if (route == Routes.CAMPUS_CARD) openTab(route)
+                        else navController.navigate(route)
+                    },
                     onLogout = {
                         scope.launch {
                             runCatching { AppContainer.authRepository.clearAll() }
@@ -379,8 +463,9 @@ fun CampusPocketRoot() {
             }
             composable(Routes.CAMPUS_CARD) {
                 CampusCardScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenOfficial = { navController.navigate(Routes.CARD_WEB) }
+                    onBack = { openTab(Routes.TODAY) },
+                    onOpenOfficial = { navController.navigate(Routes.CARD_WEB) },
+                    showBack = false
                 )
             }
             composable(Routes.CARD_WEB) {
@@ -412,7 +497,7 @@ fun CampusPocketRoot() {
             composable(Routes.RUN) {
                 PlaceholderScreen(
                     title = "阳光跑记录",
-                    badge = "跑",
+                    icon = Icons.AutoMirrored.Outlined.DirectionsRun,
                     description = "只读展示闪动校园跑步记录，不提供任何自动打卡能力。",
                     onBack = { navController.popBackStack() }
                 )
@@ -420,8 +505,8 @@ fun CampusPocketRoot() {
             composable(Routes.PRIVACY) {
                 PlaceholderScreen(
                     title = "隐私说明",
-                    badge = "隐",
-                    description = "所有凭据仅保存在本机加密数据库中，App 不上传任何个人数据，也不保存账号密码。",
+                    icon = Icons.Outlined.PrivacyTip,
+                    description = "所有凭据仅保存在本机加密数据库中，App 不上传任何个人数据，也不保存账号密码；天气接口只发送设备定位或校区坐标。",
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -433,36 +518,146 @@ fun CampusPocketRoot() {
             }
             }
         }
+        }
+        }
+        if (showQuickActions) {
+            QuickActionsSheet(
+                onDismiss = { showQuickActions = false },
+                onAction = { route, asTab ->
+                    showQuickActions = false
+                    if (asTab) openTab(route) else navController.navigate(route)
+                }
+            )
+        }
+    }
+}
+
+private data class QuickActionItem(
+    val label: String,
+    val route: String,
+    val icon: ImageVector,
+    val color: Color,
+    val asTab: Boolean = false
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuickActionsSheet(
+    onDismiss: () -> Unit,
+    onAction: (route: String, asTab: Boolean) -> Unit
+) {
+    val shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+    val items = listOf(
+        QuickActionItem("数据同步", Routes.SYNC, Icons.Outlined.Sync, ActionGreen),
+        QuickActionItem("电费查询", Routes.ELECTRICITY, Icons.Outlined.Bolt, WarningAmber),
+        QuickActionItem(
+            "校园卡",
+            Routes.CAMPUS_CARD,
+            Icons.Outlined.CreditCard,
+            TealPrimary,
+            asTab = true
+        ),
+        QuickActionItem("空闲教室", Routes.CLASSROOMS, Icons.Outlined.School, Color(0xFF3B7BBF)),
+        QuickActionItem("图书馆", Routes.LIBRARY, Icons.Outlined.LocalLibrary, Color(0xFF7C5CC4)),
+        QuickActionItem(
+            "U净洗衣",
+            Routes.LAUNDRY,
+            Icons.Outlined.LocalLaundryService,
+            Color(0xFFD94F7E)
+        )
+    )
+    val dark = isGlassDark()
+    val sheetBrush = if (dark) {
+        Brush.verticalGradient(listOf(Color(0xFF1B2B29), Color(0xFF0D1817)))
+    } else {
+        Brush.verticalGradient(listOf(Color(0xFFFFFEFC), Color(0xFFEFFBF8)))
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
+        dragHandle = null,
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(sheetBrush)
+                .border(1.dp, glassBorderBrush(), shape)
+                .navigationBarsPadding()
+        ) {
+            GlassOverlay(Modifier.matchParentSize())
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 30.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .width(38.dp)
+                        .height(4.dp)
+                        .background(
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
+                            RoundedCornerShape(2.dp)
+                        )
+                )
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "快捷操作",
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = "常用的校园服务，一步直达",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+                items.chunked(3).forEachIndexed { rowIndex, rowItems ->
+                    if (rowIndex > 0) Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        rowItems.forEach { item ->
+                            QuickActionTile(
+                                item = item,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onAction(item.route, item.asTab) }
+                            )
+                        }
+                        repeat(3 - rowItems.size) {
+                            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun CampusBottomBar(currentRoute: String?, onSelect: (String) -> Unit) {
-    val colors = NavigationBarItemDefaults.colors(
-        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        selectedTextColor = MaterialTheme.colorScheme.primary,
-        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    androidx.compose.foundation.layout.Column {
-        HorizontalDivider(
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-            thickness = 1.dp
-        )
-        NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp
+private fun QuickActionTile(
+    item: QuickActionItem,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    AppCard(
+        modifier = modifier,
+        onClick = onClick,
+        contentPadding = 12.dp
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            tabs.forEach { tab ->
-                NavigationBarItem(
-                    selected = currentRoute == tab.route,
-                    onClick = { onSelect(tab.route) },
-                    icon = { Icon(tab.icon, contentDescription = tab.label) },
-                    label = { Text(tab.label) },
-                    colors = colors
-                )
-            }
+            IconBadge(icon = item.icon, color = item.color, size = 36.dp)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = item.label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }

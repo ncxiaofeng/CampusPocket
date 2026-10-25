@@ -41,8 +41,22 @@ class CampusCardViewModel(
         private set
 
     private var nextPage = 2
+    private var lastSuccessAt = 0L
+    private var lastAttemptAt = 0L
 
     init {
+        load()
+    }
+
+    /**
+     * 首页使用：有数据且未过期就不打扰接口；
+     * 刚失败过也先等一会儿，避免每次回到前台都重试。
+     */
+    fun ensureFresh(maxAgeMillis: Long = 5 * 60 * 1000L) {
+        val now = System.currentTimeMillis()
+        if (isLoading) return
+        if (overview != null && now - lastSuccessAt < maxAgeMillis) return
+        if (now - lastAttemptAt < 15_000L) return
         load()
     }
 
@@ -50,6 +64,7 @@ class CampusCardViewModel(
         if (isLoading) return
         viewModelScope.launch {
             isLoading = true
+            lastAttemptAt = System.currentTimeMillis()
             message = null
             needsLogin = false
             runCatching {
@@ -62,6 +77,8 @@ class CampusCardViewModel(
                     bills = page.items
                     total = page.total
                     nextPage = 2
+                    lastSuccessAt = System.currentTimeMillis()
+                    message = null
                 },
                 onFailure = { error ->
                     needsLogin = error is SessionExpiredException

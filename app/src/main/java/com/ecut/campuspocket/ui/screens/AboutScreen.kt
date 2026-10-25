@@ -381,7 +381,7 @@ private fun PrivacyCard(onOpenPrivacy: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("隐私说明", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = "凭据只存本机、不保存账号密码、禁止系统备份",
+                    text = "凭据只存本机、不保存账号密码；天气接口仅发送设备定位或校区坐标",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

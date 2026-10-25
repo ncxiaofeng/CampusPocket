@@ -2,11 +2,13 @@ package com.ecut.campuspocket.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,9 +23,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -55,61 +62,80 @@ fun ScheduleGrid(
     blocks: List<CourseBlock>,
     modifier: Modifier = Modifier,
     periodCount: Int = ClassTimes.regularPeriods,
-    rowHeight: Dp = 52.dp,
+    rowHeight: Dp = 56.dp,
+    headerHeight: Dp = 58.dp,
     weekStart: LocalDate = LocalDate.now().minusDays((LocalDate.now().dayOfWeek.value - 1).toLong()),
     highlightToday: Boolean = true,
+    showCampus: Boolean = true,
     onBlockClick: (CourseBlock) -> Unit = {}
 ) {
-    val labelWidth = 46.dp
-    val headerHeight = 44.dp
-    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    val labelWidth = 40.dp
+    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.52f)
     val strongGridColor = MaterialTheme.colorScheme.outlineVariant
+    val primary = MaterialTheme.colorScheme.primary
     val todayIndex = if (highlightToday) LocalDate.now().dayOfWeek.value - 1 else -1
     val monday = weekStart
     val nowPosition = if (highlightToday) currentPeriodPosition(LocalTime.now()) else null
 
     Column(modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().height(headerHeight)) {
-            Box(Modifier.width(labelWidth).height(headerHeight))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(headerHeight)
+        ) {
+            Box(
+                Modifier
+                    .width(labelWidth)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "${monday.monthValue}月",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                )
+            }
             dayNames.forEachIndexed { index, name ->
                 val date = monday.plusDays(index.toLong())
+                val isToday = index == todayIndex
                 Column(
-                    modifier = Modifier.weight(1f).height(headerHeight),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                 ) {
+                    Text(
+                        text = name,
+                        fontSize = 11.sp,
+                        fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isToday) {
+                            primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    androidx.compose.foundation.layout.Spacer(Modifier.height(2.dp))
                     Box(
                         modifier = Modifier
-                            .size(width = 24.dp, height = 24.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (index == todayIndex) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    Color.Transparent
-                                }
-                            ),
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(if (isToday) primary else Color.Transparent),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = name,
-                            fontSize = 11.sp,
+                            text = "${date.dayOfMonth}",
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (index == todayIndex) {
+                            textAlign = TextAlign.Center,
+                            color = if (isToday) {
                                 MaterialTheme.colorScheme.onPrimary
                             } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                                MaterialTheme.colorScheme.onSurface
                             }
                         )
                     }
-                    Text(
-                        text = "${date.monthValue}/${date.dayOfMonth}",
-                        fontSize = 8.sp,
-                        color = if (index == todayIndex) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        }
-                    )
                 }
             }
         }
@@ -125,15 +151,25 @@ fun ScheduleGrid(
                 val rowPx = rowHeight.toPx()
                 val labelPx = labelWidth.toPx()
                 val cellPx = cellWidth.toPx()
-                for (row in 0..periodCount) {
-                    if (row >= periodCount) break
+
+                // 今天的列加一层很淡的底色，快速定位。
+                if (todayIndex in 0..6) {
+                    drawRoundRect(
+                        color = primary.copy(alpha = 0.045f),
+                        topLeft = Offset(labelPx + cellPx * todayIndex, 0f),
+                        size = Size(cellPx, size.height),
+                        cornerRadius = CornerRadius(12.dp.toPx(), 12.dp.toPx())
+                    )
+                }
+
+                for (row in 0 until periodCount) {
                     val y = rowPx * row
                     val strong = row == 4 || row == 8
                     drawLine(
                         color = if (strong) strongGridColor else gridColor,
                         start = Offset(labelPx, y),
                         end = Offset(size.width, y),
-                        strokeWidth = if (strong) 1.6f else 1f
+                        strokeWidth = if (strong) 1.4f else 1f
                     )
                 }
                 for (col in 0..7) {
@@ -161,29 +197,29 @@ fun ScheduleGrid(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = "$period",
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (start != null && end != null) {
                                 Text(
                                     text = start,
-                                    fontSize = 7.sp,
-                                    lineHeight = 8.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.66f)
                                 )
                                 Text(
                                     text = end,
-                                    fontSize = 7.sp,
-                                    lineHeight = 8.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                 )
                             } else {
                                 Text(
                                     text = "夜间",
-                                    fontSize = 7.sp,
-                                    lineHeight = 8.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                 )
                             }
                         }
@@ -210,11 +246,33 @@ fun ScheduleGrid(
                 }
             }
 
-            // 课程块
+            // 课程块：高饱和底色 + 白字，优先保证课程名可读。
             blocks.forEach { block ->
                 val startPeriod = block.startPeriod.coerceIn(1, periodCount)
                 val endPeriod = block.endPeriod.coerceIn(startPeriod, periodCount)
                 val span = endPeriod - startPeriod + 1
+                val blockShape = RoundedCornerShape(10.dp)
+                val shortCampus = block.campus
+                    .removeSuffix("校园")
+                    .removeSuffix("校区")
+                    .ifBlank { block.campus }
+                val place = buildString {
+                    if (showCampus && shortCampus.isNotBlank()) {
+                        append("@")
+                        append(shortCampus)
+                        if (block.room.isNotBlank()) append(" ")
+                    }
+                    append(block.room)
+                }
+                val showPlace = place.isNotBlank() && (span >= 2 || rowHeight >= 54.dp)
+                val showTeacher = span >= 2 &&
+                    block.teacher.isNotBlank() &&
+                    rowHeight * span >= 88.dp
+                val titleLines = when {
+                    span >= 3 -> 6
+                    span == 2 -> 4
+                    else -> 2
+                }
                 Box(
                     modifier = Modifier
                         .offset(
@@ -223,50 +281,46 @@ fun ScheduleGrid(
                         )
                         .width(cellWidth - 4.dp)
                         .height(rowHeight * span - 4.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(block.color)
+                        .clip(blockShape)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    lerp(block.color, Color.White, 0.12f),
+                                    block.color
+                                )
+                            )
+                        )
+                        .border(1.dp, Color.White.copy(alpha = 0.50f), blockShape)
                         .clickable { onBlockClick(block) }
-                        .padding(horizontal = 3.dp, vertical = 3.dp)
+                        .padding(horizontal = 2.dp, vertical = 3.dp)
                 ) {
                     Column {
                         Text(
                             text = block.title,
-                            fontSize = 9.sp,
-                            lineHeight = 10.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF1D3531),
-                            maxLines = if (span >= 2) 5 else 2,
+                            fontSize = 11.5.sp,
+                            lineHeight = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = titleLines,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (block.campus.isNotBlank() || block.room.isNotBlank()) {
+                        if (showPlace) {
                             Text(
-                                text = buildString {
-                                    if (block.campus.isNotBlank()) {
-                                        append("@")
-                                        append(
-                                            block.campus
-                                                .removeSuffix("校园")
-                                                .removeSuffix("校区")
-                                        )
-                                    }
-                                    if (block.room.isNotBlank()) {
-                                        if (isNotEmpty()) append(" ")
-                                        append(block.room)
-                                    }
-                                },
-                                fontSize = 7.sp,
-                                lineHeight = 8.5.sp,
-                                color = Color(0xFF1D3531).copy(alpha = 0.72f),
-                                maxLines = 2,
+                                text = place,
+                                fontSize = 9.sp,
+                                lineHeight = 10.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color.White.copy(alpha = 0.90f),
+                                maxLines = if (span >= 2) 2 else 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        if (span >= 2 && block.teacher.isNotBlank()) {
+                        if (showTeacher) {
                             Text(
                                 text = block.teacher,
-                                fontSize = 6.5.sp,
-                                lineHeight = 8.5.sp,
-                                color = Color(0xFF1D3531).copy(alpha = 0.6f),
+                                fontSize = 8.5.sp,
+                                lineHeight = 10.sp,
+                                color = Color.White.copy(alpha = 0.78f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )

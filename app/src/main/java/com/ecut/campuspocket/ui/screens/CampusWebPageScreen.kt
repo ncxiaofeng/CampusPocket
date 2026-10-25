@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -136,8 +138,14 @@ fun CampusWebPageScreen(
                 Text("‹", fontSize = 28.sp, color = MaterialTheme.colorScheme.onSurface)
             }
             Spacer(Modifier.width(4.dp))
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.weight(1f))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            val compactPadding = PaddingValues(horizontal = 6.dp)
             if (userAgentSwitch) {
                 TextButton(
                     onClick = {
@@ -148,7 +156,8 @@ fun CampusWebPageScreen(
                             CampusEndpoints.MOBILE_BROWSER_USER_AGENT
                         }
                         webViewRef.value?.reload()
-                    }
+                    },
+                    contentPadding = compactPadding
                 ) { Text(if (desktopMode) "手机" else "PC") }
             }
             if (openInBrowser) {
@@ -160,10 +169,14 @@ fun CampusWebPageScreen(
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             )
                         }
-                    }
+                    },
+                    contentPadding = compactPadding
                 ) { Text("浏览器") }
             }
-            TextButton(onClick = { webViewRef.value?.reload() }) { Text("刷新") }
+            TextButton(
+                onClick = { webViewRef.value?.reload() },
+                contentPadding = compactPadding
+            ) { Text("刷新") }
         }
 
         Surface(

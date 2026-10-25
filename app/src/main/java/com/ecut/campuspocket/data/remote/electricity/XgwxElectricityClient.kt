@@ -118,6 +118,9 @@ class XgwxElectricityClient(
 
     /**
      * 按 7 天分块查询最近 30 天；接口若拒绝范围查询，则对这一块逐日兜底。
+     *
+     * 学校接口对超出保留期/未结算的日期会返回空 list 或 0，
+     * 这些日期不能当成“用了 0 度”，否则图表会出现整段 0.0。
      */
     private fun queryDosageChunked(
         houseId: String,
@@ -154,6 +157,8 @@ class XgwxElectricityClient(
 
     /**
      * 按日期范围查询每日用量。data.list[].data_date 为 yyyyMMdd。
+     *
+     * 只接受真正有读数的日期；0 度视为“接口未返回数据”。
      */
     private fun queryDosageRange(
         houseId: String,
@@ -174,6 +179,7 @@ class XgwxElectricityClient(
             referer = "$baseUrl/app/wechat/houseMeterSurplus.jsp"
         )
         val root = parseObject(json)
+        if (root.string("ret") != "1") return emptyList()
         val data = root.get("data")?.takeIf { !it.isJsonNull }?.asJsonObject ?: return emptyList()
         val list = data.getAsJsonArray("list") ?: return emptyList()
         return list.mapNotNull { element ->
@@ -183,16 +189,18 @@ class XgwxElectricityClient(
                 LocalDate.parse(dateText, DateTimeFormatter.BASIC_ISO_DATE)
             }.getOrNull() ?: return@mapNotNull null
             val usage = item.doubleOrNull("energy_used") ?: return@mapNotNull null
+            if (usage <= 0.0) return@mapNotNull null
             date to usage
         }
     }
 
+    /** 单日查询；没有有效读数时返回 null，而不是伪造 0 度。 */
     private fun queryDosage(
         houseId: String,
         meterId: String,
         start: String,
         end: String
-    ): Double {
+    ): Double? {
         val body = FormBody.Builder()
             .add("houseId", houseId)
             .add("meterId", meterId)
@@ -205,23 +213,25 @@ class XgwxElectricityClient(
             referer = "$baseUrl/app/wechat/houseMeterSurplus.jsp"
         )
         val root = parseObject(json)
-        if (root.string("ret") != "1") return 0.0
+        if (root.string("ret") != "1") return null
         val data = root.get("data")
-        if (data == null || data.isJsonNull) return 0.0
+        if (data == null || data.isJsonNull) return null
         if (data.isJsonObject) {
             val objectData = data.asJsonObject
-            val total = objectData.get("totle") ?: objectData.get("total")
-            if (total != null && !total.isJsonNull) {
-                return runCatching { total.asDouble }.getOrDefault(0.0)
-            }
-            val list = objectData.getAsJsonArray("list") ?: return 0.0
-            return list.sumOf { item ->
+            val list = objectData.getAsJsonArray("list")
+            val listTotal = list?.sumOf { item ->
                 runCatching {
                     item.asJsonObject.get("energy_used")?.asDouble ?: 0.0
                 }.getOrDefault(0.0)
-            }
+            } ?: 0.0
+            if (listTotal > 0.0) return listTotal
+            val total = objectData.get("totle") ?: objectData.get("total")
+            val totalValue = total
+                ?.takeIf { !it.isJsonNull }
+                ?.let { runCatching { it.asDouble }.getOrNull() }
+            return totalValue?.takeIf { it > 0.0 }
         }
-        return runCatching { data.asDouble }.getOrDefault(0.0)
+        return runCatching { data.asDouble }.getOrNull()?.takeIf { it > 0.0 }
     }
 
     private fun get(url: String): String {

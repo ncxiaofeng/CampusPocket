@@ -24,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,10 +61,27 @@ fun ElectricityScreen(
 ) {
     val days by viewModel.days.collectAsStateWithLifecycle()
     var range by rememberSaveable { mutableIntStateOf(7) }
-    val displayed = days.takeLast(range)
-    val latest = days.lastOrNull()
-    val yesterdayEpochDay = LocalDate.now().minusDays(1).toEpochDay()
-    val yesterday = days.lastOrNull { it.epochDay == yesterdayEpochDay }
+    val today = LocalDate.now()
+    val dayByEpoch = remember(days) { days.associateBy { it.epochDay } }
+    val windowStart = today.minusDays((range - 1).toLong())
+    val displayed = remember(days, range, today) {
+        days.filter { it.epochDay in windowStart.toEpochDay()..today.toEpochDay() }
+    }
+    val usageDays = displayed.filter { it.totalKwh > 0.0 }
+    val latestBalanceDay = days.lastOrNull { it.balance != null }
+    val yesterday = dayByEpoch[today.minusDays(1).toEpochDay()]
+    val bars = remember(dayByEpoch, range, today) {
+        (0 until range).map { offset ->
+            val date = windowStart.plusDays(offset.toLong())
+            val day = dayByEpoch[date.toEpochDay()]
+            UsageBar(
+                label = "${date.monthValue}/${date.dayOfMonth}",
+                lightingKwh = day?.lightingKwh?.toFloat() ?: 0f,
+                acKwh = day?.acKwh?.toFloat() ?: 0f,
+                hasData = day != null && day.totalKwh > 0.0
+            )
+        }
+    }
 
     Column(
         modifier = modifier
@@ -154,7 +172,13 @@ fun ElectricityScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item { BalanceCard(latest = latest, yesterday = yesterday) }
+            item {
+                BalanceCard(
+                    balance = latestBalanceDay?.balance,
+                    updatedAt = latestBalanceDay?.updatedAt,
+                    yesterday = yesterday
+                )
+            }
 
             item {
                 AppCard {
@@ -169,8 +193,8 @@ fun ElectricityScreen(
                                 range = range,
                                 onRange = { newRange ->
                                     range = newRange
-                                    // 旧缓存只有 7 天时，切到 30 天自动补拉一次。
-                                    if (newRange == 30 && days.size < 8 &&
+                                    // 切到 30 天且本机完全没有记录时自动补拉一次。
+                                    if (newRange == 30 && days.isEmpty() &&
                                         !viewModel.isSyncing
                                     ) {
                                         viewModel.sync()
@@ -183,15 +207,18 @@ fun ElectricityScreen(
                             LegendDot(ChartPrimary, "用电量")
                             Spacer(Modifier.weight(1f))
                             Text(
-                                text = if (displayed.isEmpty()) "" else {
-                                    "近 ${displayed.size} 天 ${"%.1f".format(displayed.sumOf { it.totalKwh })} 度"
+                                text = if (usageDays.isEmpty()) {
+                                    "暂无有效数据"
+                                } else {
+                                    "合计 ${"%.1f".format(usageDays.sumOf { it.totalKwh })} 度 · " +
+                                        "${usageDays.size} 天有数据"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.height(12.dp))
-                        if (displayed.isEmpty()) {
+                        if (usageDays.isEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -206,26 +233,42 @@ fun ElectricityScreen(
                             }
                         } else {
                             StackedUsageChart(
-                                bars = displayed.map { it.toBar() },
+                                bars = bars,
                                 lightingColor = ChartPrimary,
                                 acColor = ChartAc,
-                                labelEvery = labelStepFor(displayed.size)
+                                labelEvery = labelStepFor(bars.size)
                             )
                         }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "空白圆点表示系统未返回该日明细；学校接口只保留近期数据。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
                     }
                 }
             }
 
             if (days.isEmpty()) {
                 item { EmptyElectricityCard(onOpenLogin = onOpenLogin) }
+            } else if (usageDays.isEmpty()) {
+                item {
+                    AppCard {
+                        Text(
+                            text = "近 $range 天内没有读取到有效用电明细。可能是接口尚未结算，或超出了一卡通系统的明细保留期。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             } else {
                 item {
                     Column {
-                        SectionHeader(title = "历史记录", action = "最近 ${displayed.size} 天")
+                        SectionHeader(title = "历史记录", action = "近 $range 天 · ${usageDays.size} 天")
                         Spacer(Modifier.height(10.dp))
                         AppCard(contentPadding = 0.dp) {
                             Column {
-                                val history = displayed.asReversed()
+                                val history = usageDays.asReversed()
                                 history.forEachIndexed { index, day ->
                                     DayRow(day)
                                     if (index != history.lastIndex) {
@@ -254,7 +297,7 @@ fun ElectricityScreen(
 }
 
 @Composable
-private fun BalanceCard(latest: ElectricityDay?, yesterday: ElectricityDay?) {
+private fun BalanceCard(balance: Double?, updatedAt: Long?, yesterday: ElectricityDay?) {
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -266,7 +309,7 @@ private fun BalanceCard(latest: ElectricityDay?, yesterday: ElectricityDay?) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        text = latest?.balance?.let { "¥%.2f".format(it) } ?: "¥ --",
+                        text = balance?.let { "¥%.2f".format(it) } ?: "¥ --",
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
@@ -275,13 +318,23 @@ private fun BalanceCard(latest: ElectricityDay?, yesterday: ElectricityDay?) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = when {
-                        latest == null -> "尚未同步"
+                        balance == null -> "尚未同步"
                         yesterday == null -> "昨日用电暂无数据"
                         else -> "昨日用电 ${"%.1f".format(yesterday.totalKwh)} 度"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (updatedAt != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "更新于 " + java.time.Instant.ofEpochMilli(updatedAt)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .format(DateTimeFormatter.ofPattern("M月d日 HH:mm")),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                    )
+                }
             }
             IconBadge(text = "电", color = WarningAmber, size = 44.dp)
         }
@@ -354,7 +407,7 @@ private fun EmptyElectricityCard(onOpenLogin: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "登录“宿舍缴费”后点“同步”，即可读取电表余额和最近 7 天用量。数据只保存在本机。",
+                    text = "完成统一身份认证后点“同步”，即可读取电表余额和最近 30 天用量。数据只保存在本机。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -363,7 +416,7 @@ private fun EmptyElectricityCard(onOpenLogin: () -> Unit) {
                     onClick = onOpenLogin,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Text("登录宿舍缴费")
+                    Text("登录统一身份认证")
                 }
             }
         }
@@ -395,13 +448,4 @@ private fun DayRow(day: ElectricityDay) {
             color = MaterialTheme.colorScheme.primary
         )
     }
-}
-
-private fun ElectricityDay.toBar(): UsageBar {
-    val date = LocalDate.ofEpochDay(epochDay)
-    return UsageBar(
-        label = "${date.monthValue}/${date.dayOfMonth}",
-        lightingKwh = lightingKwh.toFloat(),
-        acKwh = acKwh.toFloat()
-    )
 }

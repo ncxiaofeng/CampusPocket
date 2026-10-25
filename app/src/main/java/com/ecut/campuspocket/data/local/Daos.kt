@@ -54,8 +54,15 @@ interface ElectricityDao {
     @Query("SELECT * FROM electricity_records WHERE recordedAt >= :sinceMillis ORDER BY recordedAt ASC")
     suspend fun since(sinceMillis: Long): List<ElectricityRecordEntity>
 
-    @Query("SELECT * FROM electricity_records ORDER BY recordedAt DESC LIMIT 1000")
+    @Query("SELECT balance FROM electricity_records WHERE balance IS NOT NULL ORDER BY recordedAt DESC LIMIT 1")
+    suspend fun latestBalance(): Double?
+
+    @Query("SELECT * FROM electricity_records ORDER BY recordedAt DESC LIMIT 5000")
     fun observeRecent(): Flow<List<ElectricityRecordEntity>>
+
+    /** 同一天只保留一条采样，避免反复同步后把更早的历史挤出缓存上限。 */
+    @Query("DELETE FROM electricity_records WHERE epochDay = :epochDay")
+    suspend fun deleteForDay(epochDay: Long)
 
     @Query("DELETE FROM electricity_records")
     suspend fun clear()

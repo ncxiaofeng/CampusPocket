@@ -25,7 +25,9 @@ import kotlin.math.ceil
 data class UsageBar(
     val label: String,
     val lightingKwh: Float,
-    val acKwh: Float
+    val acKwh: Float,
+    /** 接口未返回该日期数据；画空档，不画 0 度柱子。 */
+    val hasData: Boolean = true
 )
 
 /**
@@ -39,6 +41,8 @@ fun StackedUsageChart(
     modifier: Modifier = Modifier,
     labelEvery: Int = 1
 ) {
+    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+    val missingColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
     Column(modifier = modifier.fillMaxWidth()) {
         Canvas(
             modifier = Modifier
@@ -46,7 +50,9 @@ fun StackedUsageChart(
                 .height(150.dp)
         ) {
             if (bars.isEmpty()) return@Canvas
-            val maxTotal = bars.maxOf { it.lightingKwh + it.acKwh }.coerceAtLeast(0.1f)
+            val maxTotal = bars.filter { it.hasData }
+                .maxOfOrNull { it.lightingKwh + it.acKwh }
+                ?.coerceAtLeast(0.1f) ?: 0.1f
             val slot = size.width / bars.size
             val barWidth = (slot * 0.52f).coerceAtMost(22.dp.toPx())
             val corner = CornerRadius(barWidth * 0.28f, barWidth * 0.28f)
@@ -55,7 +61,7 @@ fun StackedUsageChart(
             for (step in 0..3) {
                 val y = size.height * step / 3f
                 drawLine(
-                    color = ChartGrid.copy(alpha = 0.7f),
+                    color = gridColor,
                     start = Offset(0f, y),
                     end = Offset(size.width, y),
                     strokeWidth = 1f
@@ -63,9 +69,18 @@ fun StackedUsageChart(
             }
 
             bars.forEachIndexed { index, bar ->
+                val left = slot * index + (slot - barWidth) / 2f
+                if (!bar.hasData) {
+                    // 空白日期用一个小圆点提示“有日期、无数据”，不要画成 0 度柱。
+                    drawCircle(
+                        color = missingColor,
+                        radius = 1.5.dp.toPx(),
+                        center = Offset(left + barWidth / 2f, size.height - 3.dp.toPx())
+                    )
+                    return@forEachIndexed
+                }
                 val total = bar.lightingKwh + bar.acKwh
                 if (total <= 0f) return@forEachIndexed
-                val left = slot * index + (slot - barWidth) / 2f
                 val barHeight = size.height * (total / maxTotal)
                 val lightingHeight = barHeight * (bar.lightingKwh / total)
                 val acHeight = barHeight - lightingHeight

@@ -31,7 +31,11 @@ class ElectricityRepository(private val dao: ElectricityDao) {
         )
     }
 
+    suspend fun latestBalance(): Double? = dao.latestBalance()
+
     suspend fun addDaySample(epochDay: Long, totalKwh: Double, balance: Double?) {
+        // 同一天覆盖写入：反复同步不会产生重复采样，也不会挤掉更早的历史。
+        dao.deleteForDay(epochDay)
         dao.insert(
             ElectricityRecordEntity(
                 epochDay = epochDay,
@@ -47,6 +51,10 @@ class ElectricityRepository(private val dao: ElectricityDao) {
 
     private fun aggregate(records: List<ElectricityRecordEntity>): List<ElectricityDay> {
         return records.groupBy { it.epochDay }
+            // 旧版本把接口拿不到的日期写成了 0 度；这里把“0 度且没有余额”的幽灵记录过滤掉。
+            .filter { (_, samples) ->
+                samples.any { it.lightingKwh + it.acKwh > 0.0 || it.balance != null }
+            }
             .map { (epochDay, samples) ->
                 ElectricityDay(
                     epochDay = epochDay,

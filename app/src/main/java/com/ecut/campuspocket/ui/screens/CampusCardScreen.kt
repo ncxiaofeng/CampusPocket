@@ -43,6 +43,7 @@ import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.ui.components.AppCard
 import com.ecut.campuspocket.ui.components.IconBadge
 import com.ecut.campuspocket.ui.components.SectionHeader
+import com.ecut.campuspocket.ui.components.liquidGlassBottomBarContentInset
 import com.ecut.campuspocket.ui.components.ThinDivider
 import com.ecut.campuspocket.ui.theme.CourseBlue
 import com.ecut.campuspocket.ui.theme.TealPrimary
@@ -51,6 +52,7 @@ import com.ecut.campuspocket.ui.theme.TealPrimary
 fun CampusCardScreen(
     onBack: () -> Unit,
     onOpenOfficial: () -> Unit,
+    showBack: Boolean = true,
     viewModel: CampusCardViewModel = viewModel(factory = CampusCardViewModel.Factory)
 ) {
     val cardCredential by AppContainer.authRepository
@@ -58,9 +60,9 @@ fun CampusCardScreen(
         .collectAsStateWithLifecycle(initialValue = null)
     val overview = viewModel.overview
 
-    // 从官方登录页返回后自动刷新。
+    // 从官方登录页返回 / 切回本 Tab 时自动刷新（5 分钟内不重复请求）。
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        viewModel.load()
+        viewModel.ensureFresh()
     }
 
     // 首次进入时，把 WebView 里已有的 ehall 会话迁移到加密库，省一次登录。
@@ -87,19 +89,33 @@ fun CampusCardScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 2.dp),
+                .padding(
+                    start = if (showBack) 8.dp else 16.dp,
+                    end = 8.dp,
+                    top = if (showBack) 8.dp else 14.dp,
+                    bottom = 2.dp
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("‹", fontSize = 28.sp, color = MaterialTheme.colorScheme.onSurface)
+            if (showBack) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clickable(onClick = onBack),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("‹", fontSize = 28.sp, color = MaterialTheme.colorScheme.onSurface)
+                }
+                Spacer(Modifier.width(4.dp))
             }
-            Spacer(Modifier.width(4.dp))
-            Text("校园卡", style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = "校园卡",
+                style = if (showBack) {
+                    MaterialTheme.typography.titleLarge
+                } else {
+                    MaterialTheme.typography.headlineMedium
+                }
+            )
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onOpenOfficial) {
                 Text("官方页", style = MaterialTheme.typography.labelMedium)
@@ -171,7 +187,12 @@ fun CampusCardScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = 20.dp,
+                    top = 8.dp,
+                    bottom = 28.dp + liquidGlassBottomBarContentInset()
+                ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item(key = "overview") { CardOverviewCard(overview) }
@@ -415,5 +436,5 @@ private fun maskCard(number: String): String {
 
 private fun formatBillTime(raw: String): String {
     val cleaned = raw.replace(Regex("""^\d{4}-"""), "")
-    return cleaned.take(16)
+    return cleaned.substringBeforeLast(":").take(16)
 }
