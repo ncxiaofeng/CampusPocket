@@ -73,6 +73,13 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 > 工作流需要仓库 Actions 的 `GITHUB_TOKEN` 具有 `contents: write` 权限（`permissions` 已声明）。
 > 如果仓库设置把默认权限改成只读，需要改成 Read and write 或使用 PAT。
 
+### 0.5.4 蓝奏云镜像（2026-10-28）
+
+- 固定文件夹（提取码 `c3bc`）：https://ncxiaofeng.lanzoub.com/b0j1u822d
+  - 已加入 `CampusPocket-0.5.4.zip`（APK + SHA256 + 安装说明，10.3 MB，file id `327101322`）。
+- GitHub Release：https://github.com/ncxiaofeng/CampusPocket/releases/tag/v0.5.4
+  - APK 21,488,826 bytes，SHA256 `519b7859350e293f7b9a277ce6c08e73f98bac29667353dc6771b632192e0cc5`。
+
 ### 0.4.1 蓝奏云镜像（2026-10-25）
 
 - 固定文件夹（提取码 `c3bc`）：https://ncxiaofeng.lanzoub.com/b0j1u822d
@@ -97,6 +104,14 @@ aTrust 使用深信服私有隧道协议，App 不内置协议实现，也不绕
 
 ## 版本
 
+- 0.5.4（2026-10-28）：
+  - 修复“刚登录统一认证就提示登录过期”：CAS 主域整套保存 `CASTGC + route + JSESSIONID`；
+    从零信任域镜像 ticket 时与主域已有 Cookie 合并，不再清掉集群粘性路由。
+  - 校内「统一身份认证」直接打开教务 SSO 页，一次拿到 CASTGC 与教务 JSESSIONID；
+    校外仍走 CAS，WebVPN 代理只认 `172-20-130-13.atrust.ecut.edu.cn` 的会话。
+  - 教务请求支持直连/代理候选与自动回退；代理失败提示打开零信任门户，不再误导去 CAS 重新登录。
+  - 一卡通接口 401/403 自动重建 ehall 会话、预热 `psxykapp` 应用上下文后重试一次；
+    仍失败引导打开校园卡官方页。
 - 0.4.1（2026-10-25）：
   - 统一身份认证单点登录：一次登录后，课表、成绩、考试、空闲教室、通知公告、电费、校园卡、
     办事大厅共用同一个 CAS 会话；各系统会话过期时自动静默换票，不再逐模块重新登录。
