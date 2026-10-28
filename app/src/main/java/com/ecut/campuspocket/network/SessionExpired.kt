@@ -13,7 +13,7 @@ class SessionExpiredException(
  * 需要用户先在门户里打开一次“新教务管理系统”，让代理域拿到会话 Cookie。
  */
 class ProxySessionRequiredException(
-    message: String = "请先在零信任门户中打开“新教务管理系统”，建立代理会话后再同步。"
+    message: String = "零信任代理会话已失效：请在「更多 → 零信任 VPN → 零信任门户」里打开一次“新教务管理系统”，再回来同步。"
 ) : IOException(message)
 
 /**

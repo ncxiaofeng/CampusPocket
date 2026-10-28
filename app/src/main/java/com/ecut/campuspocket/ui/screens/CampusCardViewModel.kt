@@ -83,7 +83,7 @@ class CampusCardViewModel(
                 onFailure = { error ->
                     needsLogin = error is SessionExpiredException
                     message = if (needsLogin) {
-                        "请先打开校园卡官方页完成统一认证"
+                        "一卡通需要在线会话：点右侧按钮打开官方页加载一次，再返回刷新"
                     } else {
                         "读取失败：${error.message ?: "请检查网络连接"}"
                     }
@@ -106,7 +106,7 @@ class CampusCardViewModel(
                 .onFailure { error ->
                     needsLogin = error is SessionExpiredException
                     message = if (needsLogin) {
-                        "请先打开校园卡官方页完成统一认证"
+                        "一卡通需要在线会话：点右侧按钮打开官方页加载一次，再返回刷新"
                     } else {
                         "加载更多失败：${error.message ?: "请检查网络连接"}"
                     }

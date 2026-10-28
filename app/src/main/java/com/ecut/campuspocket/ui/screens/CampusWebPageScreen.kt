@@ -294,7 +294,10 @@ fun CampusWebPageScreen(
                                 if (saveProxySession) {
                                     val currentUrl = url.orEmpty()
                                     val currentHost = Uri.parse(currentUrl).host.orEmpty()
-                                    if (currentHost.endsWith(".atrust.ecut.edu.cn")) {
+                                    // 只有真正映射到教务的代理域名才持有 JW 代理会话。
+                                    // 门户主页（atrust1.ecut.edu.cn）的 Cookie 存下来会误判“代理已就绪”，
+                                    // 之后原生同步会一直拿不到 /jwglxt 会话。
+                                    if (currentHost == CampusEndpoints.JW_PROXY_HOST) {
                                         val raw = CookieManager.getInstance()
                                             .getCookie(currentUrl)
                                         if (!raw.isNullOrBlank()) {

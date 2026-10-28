@@ -156,8 +156,12 @@ fun LoginWebViewScreen(
                 if (primaryHost != CampusEndpoints.CAS_HOST) {
                     // 零信任代理域名（authserver-...atrust...）下拿到的 CASTGC 也镜像到 CAS 主域，
                     // 让“先登零信任”同样能一次性解锁电费 / 校园卡。
+                    // 这里只取 ticket，主域的 route/JSESSIONID 由 fromCasHost=false 分支保留。
                     runCatching {
-                        repo.saveCasMasterCookies(cookieByHost[primaryHost].orEmpty())
+                        repo.saveCasMasterCookies(
+                            cookieByHost[primaryHost].orEmpty(),
+                            fromCasHost = false
+                        )
                     }
                 }
                 if (target.clearWebViewCookiesAfterSave) {

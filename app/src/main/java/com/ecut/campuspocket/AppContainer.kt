@@ -7,6 +7,7 @@ import com.ecut.campuspocket.data.remote.ElectricitySource
 import com.ecut.campuspocket.data.remote.electricity.XgwxElectricityClient
 import com.ecut.campuspocket.data.remote.card.CampusCardClient
 import com.ecut.campuspocket.data.remote.jw.JwAdapter
+import com.ecut.campuspocket.data.remote.jw.JwBaseUrl
 import com.ecut.campuspocket.data.remote.library.LibrarySeatClient
 import com.ecut.campuspocket.data.remote.ujing.UjingClient
 import com.ecut.campuspocket.data.remote.weather.WeatherClient
@@ -122,16 +123,21 @@ object AppContainer {
     val jwAdapter: JwAdapter by lazy {
         JwAdapter(casHttpClient, ssoManager = casSsoManager) {
             val state = CampusNetworkStatus.state.value
-            val proxy = authRepository.getCredential(CampusEndpoints.SYSTEM_JW_PROXY)
+            val proxyCredential = authRepository.getCredential(CampusEndpoints.SYSTEM_JW_PROXY)
+            // 只有落在教务代理域名上的会话才可用；门户主页 atrust1 的 Cookie 不算。
+            val proxyReady = proxyCredential?.domain == CampusEndpoints.JW_PROXY_HOST
+            val direct = JwBaseUrl(CampusEndpoints.JW_BASE_URL, isProxy = false)
+            val proxy = JwBaseUrl(CampusEndpoints.JW_PROXY_BASE_URL, isProxy = true)
             when {
-                // 校内直连最快。
-                state is CampusNetworkState.OnCampus -> CampusEndpoints.JW_BASE_URL
-                // 有 WebVPN 会话时优先走代理；检测中/未知也走代理，避免刚启动时抢跑超时。
-                proxy != null -> CampusEndpoints.JW_PROXY_BASE_URL
-                // 明确校外且没有代理会话，给出可操作的提示。
-                state is CampusNetworkState.OffCampus -> throw ProxySessionRequiredException()
-                // 检测中/未知且没有代理会话，先按校内直连尝试。
-                else -> CampusEndpoints.JW_BASE_URL
+                // 校内只走直连：直连失败是会话问题，回退到代理只会把错误伪装成“代理过期”。
+                state is CampusNetworkState.OnCampus -> listOf(direct)
+                // 明确校外：只走代理；没有代理会话就给出可操作提示。
+                state is CampusNetworkState.OffCampus -> {
+                    if (proxyReady) listOf(proxy) else throw ProxySessionRequiredException()
+                }
+                // 检测中/未知：有代理会话时先代理再直连，否则按校内直连尝试。
+                proxyReady -> listOf(proxy, direct)
+                else -> listOf(direct)
             }
         }
     }

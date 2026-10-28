@@ -2,6 +2,7 @@ package com.ecut.campuspocket.data.remote.jw
 
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CasSsoManager
+import com.ecut.campuspocket.network.ProxySessionRequiredException
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -107,22 +108,34 @@ data class JwNotice(
     val contentHtml: String
 )
 
+/** 教务接口的一个候选基地址；`isProxy` 表示零信任 WebVPN 映射域名。 */
+data class JwBaseUrl(val url: String, val isProxy: Boolean)
+
 /**
  * 正方教务（jwglxt）只读适配器。
  *
- * 依赖 WebView 登录后写入加密库的 JSESSIONID；所有接口只做查询。
+ * 依赖 WebView/CAS 换票后写入加密库的 JSESSIONID；所有接口只做查询。
+ * 基地址可以有多个候选：校内直连失败时自动试代理，代理会话过期时自动试直连。
  */
 class JwAdapter(
     private val client: OkHttpClient,
     private val ssoManager: CasSsoManager? = null,
-    /** 校内直连 `http://172.20.130.13`，校外走零信任 WebVPN 代理。 */
-    private val baseUrlProvider: suspend () -> String
+    /** 按优先级返回候选基地址（校内直连 / WebVPN 代理）。 */
+    private val baseUrlsProvider: suspend () -> List<JwBaseUrl>
 ) {
 
     @Volatile
     private var lastFailedBootstrapAt = 0L
 
-    private suspend fun baseUrl(): String = baseUrlProvider()
+    /** 最近一次成功的基地址；下次请求优先用它，避免在两种网络间来回切换。 */
+    @Volatile
+    private var preferredBaseUrl: String? = null
+
+    private suspend fun baseCandidates(): List<JwBaseUrl> {
+        val all = baseUrlsProvider().distinctBy { it.url }
+        val preferred = preferredBaseUrl ?: return all
+        return all.sortedBy { if (it.url == preferred) 0 else 1 }
+    }
 
     /**
      * 直连教务的 JSESSIONID 过期时，用 CAS 主凭据静默换票。
@@ -130,16 +143,33 @@ class JwAdapter(
      * 只有校内直连才能这么做；WebVPN 代理域有自己的会话，换票应该在门户里完成。
      * 失败后 30 秒内不再重试，避免主凭据过期时每个同步项都打一遍 CAS。
      */
-    private suspend fun bootstrapDirectSession(): Boolean {
+    private suspend fun bootstrapDirectSession(baseUrl: String): Boolean {
         val manager = ssoManager ?: return false
-        val base = runCatching { baseUrl() }.getOrNull() ?: return false
-        if (base != CampusEndpoints.JW_BASE_URL) return false
+        if (baseUrl != CampusEndpoints.JW_BASE_URL) return false
         val now = System.currentTimeMillis()
         if (now - lastFailedBootstrapAt < BOOTSTRAP_RETRY_COOLDOWN_MS) return false
         val ok = manager.ensureServiceSession(CampusEndpoints.JW_SSO_URL)
         if (!ok) lastFailedBootstrapAt = now
         return ok
     }
+
+    /**
+     * 所有候选都失败时给出可执行的错误：
+     * 代理路径失败优先提示“去门户重建会话”，而不是把用户送去统一认证重新登录
+     * （重新登录刷新的是 CASTGC，修不好 WebVPN 代理会话）。
+     */
+    private fun terminalError(
+        proxyAttempted: Boolean,
+        lastError: IOException?
+    ): IOException = when {
+        proxyAttempted -> ProxySessionRequiredException()
+        lastError != null && lastError !is SessionExpiredException -> lastError
+        else -> SessionExpiredException()
+    }
+
+    private fun lastBaseWasProxy(): Boolean =
+        preferredBaseUrl == CampusEndpoints.JW_PROXY_BASE_URL
+
 
     suspend fun fetchSchedule(): JwScheduleResult = withContext(Dispatchers.IO) {
         val page = get(SCHEDULE_PAGE)
@@ -347,7 +377,11 @@ class JwAdapter(
         val json = postFormText(NOTICE_LIST_API, body, NOTICE_LIST_API)
         val first = json.trimStart().firstOrNull()
         if (first != '[' && first != '{') {
-            throw SessionExpiredException("教务会话已失效")
+            throw if (lastBaseWasProxy()) {
+                ProxySessionRequiredException()
+            } else {
+                SessionExpiredException("教务会话已失效")
+            }
         }
         val array = parseArray(json)
         array.mapNotNull { element -> toNotice(element.asJsonObject) }
@@ -368,16 +402,32 @@ class JwAdapter(
     }
 
     private suspend fun get(path: String): String {
-        val base = baseUrl()
-        val first = getRaw(base + path, base)
-        if (!first.sessionExpired) return first.body
+        var proxyAttempted = false
+        var lastError: IOException? = null
+        for (base in baseCandidates()) {
+            try {
+                val first = getRaw(base.url + path, base.url)
+                if (!first.sessionExpired) {
+                    preferredBaseUrl = base.url
+                    return first.body
+                }
+                if (base.isProxy) proxyAttempted = true
 
-        // 校内直连时可以用 CASTGC 自动续会话；代理模式不在这里处理。
-        if (bootstrapDirectSession()) {
-            val second = getRaw(base + path, base)
-            if (!second.sessionExpired) return second.body
+                // 校内直连时可以用 CASTGC 自动续会话；代理模式不在这里处理。
+                if (!base.isProxy && bootstrapDirectSession(base.url)) {
+                    val second = getRaw(base.url + path, base.url)
+                    if (!second.sessionExpired) {
+                        preferredBaseUrl = base.url
+                        return second.body
+                    }
+                }
+                lastError = SessionExpiredException()
+            } catch (error: IOException) {
+                lastError = error
+                if (base.isProxy) proxyAttempted = true
+            }
         }
-        throw SessionExpiredException()
+        throw terminalError(proxyAttempted, lastError)
     }
 
     private suspend fun getRaw(url: String, base: String): RawResponse {
@@ -406,7 +456,11 @@ class JwAdapter(
     private suspend fun postForm(path: String, body: FormBody, refererPath: String): String {
         val text = postFormText(path, body, refererPath)
         if (!text.trimStart().startsWith("{")) {
-            throw SessionExpiredException("教务会话已失效")
+            throw if (lastBaseWasProxy()) {
+                ProxySessionRequiredException()
+            } else {
+                SessionExpiredException("教务会话已失效")
+            }
         }
         return text
     }
@@ -416,15 +470,31 @@ class JwAdapter(
         body: FormBody,
         refererPath: String
     ): String {
-        val base = baseUrl()
-        val first = postRaw(base, path, body, refererPath)
-        if (!first.sessionExpired) return first.body
+        var proxyAttempted = false
+        var lastError: IOException? = null
+        for (base in baseCandidates()) {
+            try {
+                val first = postRaw(base.url, path, body, refererPath)
+                if (!first.sessionExpired) {
+                    preferredBaseUrl = base.url
+                    return first.body
+                }
+                if (base.isProxy) proxyAttempted = true
 
-        if (bootstrapDirectSession()) {
-            val second = postRaw(base, path, body, refererPath)
-            if (!second.sessionExpired) return second.body
+                if (!base.isProxy && bootstrapDirectSession(base.url)) {
+                    val second = postRaw(base.url, path, body, refererPath)
+                    if (!second.sessionExpired) {
+                        preferredBaseUrl = base.url
+                        return second.body
+                    }
+                }
+                lastError = SessionExpiredException("教务会话已失效")
+            } catch (error: IOException) {
+                lastError = error
+                if (base.isProxy) proxyAttempted = true
+            }
         }
-        throw SessionExpiredException("教务会话已失效")
+        throw terminalError(proxyAttempted, lastError)
     }
 
     private suspend fun postRaw(

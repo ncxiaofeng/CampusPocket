@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ecut.campuspocket.AppContainer
+import com.ecut.campuspocket.network.ProxySessionRequiredException
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.ecut.campuspocket.ui.components.AppCard
 import com.ecut.campuspocket.ui.components.IconBadge
@@ -44,13 +45,15 @@ import kotlinx.coroutines.launch
 @Composable
 fun SyncScreen(
     onBack: () -> Unit,
-    onOpenLogin: () -> Unit
+    onOpenLogin: () -> Unit,
+    onOpenPortal: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val syncManager = remember { AppContainer.jwSyncManager }
     var busy by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var needsLogin by remember { mutableStateOf(false) }
+    var needsPortal by remember { mutableStateOf(false) }
 
     fun runSync(label: String, task: suspend () -> Result<Int>) {
         if (busy != null) return
@@ -58,14 +61,16 @@ fun SyncScreen(
             busy = label
             message = null
             needsLogin = false
+            needsPortal = false
             task().fold(
                 onSuccess = { count -> message = "${label}已同步，共 $count 条" },
                 onFailure = { error ->
                     needsLogin = error is SessionExpiredException
-                    message = if (needsLogin) {
-                        "教务系统登录已过期，请重新登录"
-                    } else {
-                        "${label}同步失败：${error.message ?: "请检查校园网连接"}"
+                    needsPortal = error is ProxySessionRequiredException
+                    message = when {
+                        needsLogin -> "教务系统登录已过期，请重新登录"
+                        needsPortal -> error.message ?: "零信任代理会话已失效"
+                        else -> "${label}同步失败：${error.message ?: "请检查校园网连接"}"
                     }
                 }
             )
@@ -115,6 +120,8 @@ fun SyncScreen(
                     )
                     if (needsLogin) {
                         TextButton(onClick = onOpenLogin) { Text("去登录") }
+                    } else if (needsPortal) {
+                        TextButton(onClick = onOpenPortal) { Text("去门户") }
                     }
                 }
             }

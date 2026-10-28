@@ -193,9 +193,10 @@ fun CampusPocketRoot() {
     }
 
     // 原生教务接口与官方兜底页共用同一套地址选择：校内直连，校外走 WebVPN 代理。
+    val proxyReady = proxyCredential?.domain == CampusEndpoints.JW_PROXY_HOST
     fun jwBaseUrl(): String = when {
         networkState is CampusNetworkState.OnCampus -> CampusEndpoints.JW_BASE_URL
-        proxyCredential != null -> CampusEndpoints.JW_PROXY_BASE_URL
+        proxyReady -> CampusEndpoints.JW_PROXY_BASE_URL
         else -> CampusEndpoints.JW_BASE_URL
     }
 
@@ -248,7 +249,7 @@ fun CampusPocketRoot() {
             ) {
                 CampusNetworkBanner(
                     vpnAuthenticated = vpnCredential != null,
-                    proxyReady = proxyCredential != null,
+                    proxyReady = proxyReady,
                     onVpnLogin = { navController.navigate(Routes.VPN_LOGIN) },
                     onOpenPortal = { navController.navigate(Routes.VPN_PORTAL) },
                     onRetry = { scope.launch { CampusNetworkStatus.refresh() } }
@@ -301,14 +302,35 @@ fun CampusPocketRoot() {
             }
 
             composable(Routes.LOGIN) {
-                // 所有模块的“去登录”都走同一个统一身份认证入口。
-                LoginWebViewScreen(
-                    target = CampusEndpoints.CAS_LOGIN,
-                    onBack = {
-                        SessionState.clear()
-                        navController.popBackStack()
-                    }
-                )
+                // 校内：直接打开教务 SSO 页。WebView 会执行完整重定向，
+                // 一次同时拿到 CASTGC 和教务 JSESSIONID，避免再走一遍
+                // 对集群粘性 Cookie 很敏感的 OkHttp 静默换票。
+                if (networkState is CampusNetworkState.OnCampus) {
+                    CampusWebPageScreen(
+                        title = "统一身份认证 · 教务",
+                        url = CampusEndpoints.JW_SSO_URL,
+                        onBack = {
+                            SessionState.clear()
+                            navController.popBackStack()
+                        },
+                        helperText = "登录成功后会落在课表页；返回 App 点“同步”即可。",
+                        extraCookieHosts = listOf(CampusEndpoints.CAS_HOST),
+                        saveSessionHost = java.net.URI(CampusEndpoints.JW_BASE_URL).host,
+                        saveSessionSystemId = CampusEndpoints.SYSTEM_JW,
+                        detectSessionLost = false,
+                        sourceName = "教务系统"
+                    )
+                } else {
+                    // 校外：教务内网地址不可达，先完成统一认证（落到 ehall）。
+                    // 课表同步仍需在零信任门户里建立 WebVPN 代理会话。
+                    LoginWebViewScreen(
+                        target = CampusEndpoints.CAS_LOGIN,
+                        onBack = {
+                            SessionState.clear()
+                            navController.popBackStack()
+                        }
+                    )
+                }
             }
             composable(Routes.VPN_LOGIN) {
                 LoginWebViewScreen(
@@ -341,7 +363,8 @@ fun CampusPocketRoot() {
             composable(Routes.SYNC) {
                 SyncScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenLogin = { navController.navigate(Routes.LOGIN) }
+                    onOpenLogin = { navController.navigate(Routes.LOGIN) },
+                    onOpenPortal = { navController.navigate(Routes.VPN_PORTAL) }
                 )
             }
             composable(Routes.GRADES) {

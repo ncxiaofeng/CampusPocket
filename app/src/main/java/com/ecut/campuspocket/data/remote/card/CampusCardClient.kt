@@ -102,25 +102,27 @@ class CampusCardClient(
         }
 
     /**
-     * ehall 会话过期时，先用 CASTGC 静默换票再重试一次；
-     * 主凭据也失效才提示用户登录。
+     * ehall 会话过期时，先用 CASTGC 静默换票 + 打开一次卡片页（建立 psxykapp 应用上下文），
+     * 再重试一次；主凭据也失效才提示用户登录。
+     *
+     * 401/403 既可能是会话失效，也可能是 ehall 的“当前角色权限不足”；
+     * 两种都先重建会话重试一次，避免把本可以自愈的 403 直接抛给用户。
      */
     private suspend fun postData(path: String, payload: String): JsonObject {
-        val first = postDataRaw(path, payload)
-        val text = if (!first.sessionExpired) {
-            first.body
-        } else {
+        var response = postDataRaw(path, payload)
+        if (response.sessionExpired) {
             val renewed = ssoManager
                 ?.ensureServiceSession(CampusEndpoints.EHALL_CARD_SERVICE_URL) == true
             if (!renewed) {
                 throw SessionExpiredException("统一认证已过期，请重新登录")
             }
-            val second = postDataRaw(path, payload)
-            if (second.sessionExpired) {
-                throw SessionExpiredException("统一认证已过期，请重新登录")
+            primeCardPage()
+            response = postDataRaw(path, payload)
+            if (response.sessionExpired) {
+                throw SessionExpiredException("一卡通接口拒绝了当前会话，请打开校园卡官方页刷新一次")
             }
-            second.body
         }
+        val text = response.body
         val root = try {
             JsonParser.parseString(text).asJsonObject
         } catch (exception: Exception) {
@@ -136,6 +138,35 @@ class CampusCardClient(
         return root
     }
 
+    /**
+     * 用浏览器的方式把 ehall 卡片页“预热”一次。
+     *
+     * 只靠 CAS 换票得到的 `MOD_AUTH_CAS` 可能还没有 psxykapp 的应用/角色上下文；
+     * 官方页面加载时会请求 getAppConfig / emappagelog，这里按同样顺序补上。
+     * 全部按尽力而为处理，失败不影响后续原接口重试。
+     */
+    private suspend fun primeCardPage() {
+        val urls = listOf(
+            CampusEndpoints.EHALL_CARD_SERVICE_URL,
+            "$baseUrl/psfw/sys/xgpspubapp/indexmenu/getAppConfig.do" +
+                "?appId=$CARD_APP_ID&appName=psxykapp",
+            "$baseUrl/psfw/sys/emappagelog/config/psxykapp.do"
+        )
+        urls.forEach { url ->
+            runCatching {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", CampusEndpoints.DESKTOP_USER_AGENT)
+                    .header("Referer", CampusEndpoints.EHALL_CARD_SERVICE_URL)
+                    .get()
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    response.body?.string()
+                }
+            }
+        }
+    }
+
     private fun postDataRaw(path: String, payload: String): RawResponse {
         val body = FormBody.Builder().add("data", payload).build()
         val request = Request.Builder()
@@ -145,22 +176,30 @@ class CampusCardClient(
             .header("Accept", "application/json, text/javascript, */*; q=0.01")
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
-            .header("Origin", baseUrl)
-            .header("Referer", "$baseUrl/psfw/sys/psxykapp/*default/index.do")
+            .header("Referer", CampusEndpoints.EHALL_CARD_SERVICE_URL)
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("一卡通系统返回 ${response.code}")
-            }
             val text = response.body?.string().orEmpty()
+            val status = response.code
+            // 401/403：会话失效或 ehall 角色权限不足，交给 postData 重建会话后重试。
+            if (status == 401 || status == 403) {
+                return RawResponse(text, sessionExpired = true, status = status)
+            }
+            if (!response.isSuccessful) {
+                throw IOException("一卡通系统返回 $status")
+            }
             val expired = text.contains("authserver") ||
                 text.contains("login_slogin") ||
                 text.trimStart().startsWith("<")
-            return RawResponse(text, expired)
+            return RawResponse(text, expired, status)
         }
     }
 
-    private data class RawResponse(val body: String, val sessionExpired: Boolean)
+    private data class RawResponse(
+        val body: String,
+        val sessionExpired: Boolean,
+        val status: Int
+    )
 
     private fun JsonObject.string(key: String): String {
         val value = get(key) ?: return ""
@@ -179,5 +218,10 @@ class CampusCardClient(
         if (value.isJsonNull) return 0
         return runCatching { value.asInt }
             .getOrElse { value.asString.toIntOrNull() ?: 0 }
+    }
+
+    private companion object {
+        /** ehall 里 psxykapp（一卡通）的应用 ID，来自官方页面 getAppConfig 请求。 */
+        const val CARD_APP_ID = "5476902092873882"
     }
 }

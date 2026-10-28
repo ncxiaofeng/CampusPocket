@@ -59,8 +59,18 @@ class CasSsoManager(
                 .build()
             try {
                 client.newCall(request).execute().use { response ->
-                    // 跟随重定向后仍停在 CAS 域，说明 CAS 让用户重新登录，即主凭据失效。
-                    response.request.url.host != CampusEndpoints.CAS_HOST
+                    val finalUrl = response.request.url
+                    val finalPath = finalUrl.encodedPath
+                    when {
+                        // 业务系统校验 ticket 失败时会直接返回 5xx（正方 jziotlogin 就是 500），
+                        // 不能因为“已经离开 CAS 域”就当成换票成功。
+                        !response.isSuccessful -> false
+                        // 跟随重定向后仍停在 CAS 域，说明 CAS 让用户重新登录，即主凭据失效。
+                        finalUrl.host == CampusEndpoints.CAS_HOST -> false
+                        // 被 service 退回它自己的登录页，同样视为失败。
+                        finalPath.contains("login_slogin") || finalPath.contains("/authserver/") -> false
+                        else -> true
+                    }
                 }
             } catch (_: IOException) {
                 false

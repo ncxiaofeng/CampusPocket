@@ -60,6 +60,9 @@ object CampusEndpoints {
      */
     const val JW_PROXY_BASE_URL = "https://172-20-130-13.atrust.ecut.edu.cn"
 
+    /** 代理会话必须落在该主机上；门户域 `atrust1.ecut.edu.cn` 的 Cookie 不能当教务代理用。 */
+    val JW_PROXY_HOST: String = java.net.URI(JW_PROXY_BASE_URL).host
+
     /** CAS 本体，用于补充 CASTGC 等 Cookie。 */
     const val CAS_HOST = "authserver.ecut.edu.cn"
     const val AUTH_SERVER_LOGIN_URL = "https://authserver.ecut.edu.cn/authserver/login"

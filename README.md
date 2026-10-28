@@ -72,7 +72,7 @@ keyAlias=campuspocket
 keyPassword=******
 ```
 
-然后 `./gradlew assembleRelease` 会输出已签名的 `app-release.apk`（0.5.3 约 21 MB，R8 + 资源压缩）。
+然后 `./gradlew assembleRelease` 会输出已签名的 `app-release.apk`（0.5.4 约 21 MB，R8 + 资源压缩）。
 
 > 正式签名使用项目外的专用 `release.jks`（`CampusPocket-keys/`）；`keystore.properties` 不入库，
 > 请离线备份密钥与密码。换签名后旧调试包无法覆盖安装。

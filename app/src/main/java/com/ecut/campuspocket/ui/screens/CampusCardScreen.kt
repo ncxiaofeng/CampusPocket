@@ -151,7 +151,7 @@ fun CampusCardScreen(
                             onOpenOfficial()
                         },
                         contentPadding = PaddingValues(horizontal = 6.dp)
-                    ) { Text("去登录") }
+                    ) { Text("打开官方页") }
                 } else {
                     TextButton(
                         onClick = { viewModel.clearMessage() },

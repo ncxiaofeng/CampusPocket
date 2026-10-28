@@ -84,21 +84,35 @@ class AuthRepository(
      * 任何一个业务系统的 WebView 登录都可能经过 CAS，
      * 只要 Cookie 里出现 CASTGC，就把它抽出来单独存一份，
      * 之后所有 service 都能用它静默换票。
+     *
+     * @param fromCasHost true 表示 [raw] 直接来自 `authserver.ecut.edu.cn`。
+     * 此时必须整套保留（CASTGC + route + JSESSIONID）：
+     * CAS 是集群，`route` 决定 TGT 落在哪台节点，只留 CASTGC 会让下一次换票
+     * 被负载均衡打到没有该 TGT 的节点，表现为“刚登录就提示登录过期”。
+     * false 表示从零信任等代理域镜像 CASTGC，只取 ticket，并与主域已有
+     * Cookie 合并，既不带入代理域会话，也不清掉主域已保存的 route。
      */
-    suspend fun saveCasMasterCookies(raw: String) {
-        // 只保留 CASTGC 本身：其它 Cookie（route / JSESSIONID）可能来自
-        // 零信任代理域名，复制到 CAS 主域反而添乱，下一次请求会重新下发。
-        val ticketPairs = parseCookiePairs(raw).filter { (name, _) ->
+    suspend fun saveCasMasterCookies(raw: String, fromCasHost: Boolean = true) {
+        val incoming = parseCookiePairs(raw)
+        val ticketPairs = incoming.filter { (name, _) ->
             name.lowercase() in CampusEndpoints.CAS_TICKET_COOKIE_NAMES
         }
         if (ticketPairs.isEmpty()) return
-        val ticketHeader = ticketPairs.joinToString("; ") { (name, value) ->
-            "$name=$value"
+
+        val header = if (fromCasHost) {
+            dedupeCookiePairs(raw)
+        } else {
+            val existing = cookieDao.getForHost(CampusEndpoints.CAS_HOST)
+                .filter { it.domain == CampusEndpoints.CAS_HOST }
+                .joinToString("; ") { "${it.name}=${it.value}" }
+            mergeCookiePairs(existing, ticketPairs)
         }
+        if (header.isBlank()) return
+
         saveLoginCookies(
             systemId = CampusEndpoints.SYSTEM_CAS_MASTER,
             primaryHost = CampusEndpoints.CAS_HOST,
-            cookieByHost = mapOf(CampusEndpoints.CAS_HOST to ticketHeader)
+            cookieByHost = mapOf(CampusEndpoints.CAS_HOST to header)
         )
     }
 
@@ -150,6 +164,17 @@ class AuthRepository(
         val seen = LinkedHashMap<String, String>()
         parseCookiePairs(raw).forEach { (name, value) -> seen[name] = value }
         return seen.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
+    /** 以 [base] 为基础，用 [overrides] 中的同名 Cookie 覆盖后拼成请求头。 */
+    private fun mergeCookiePairs(
+        base: String,
+        overrides: List<Pair<String, String>>
+    ): String {
+        val merged = LinkedHashMap<String, String>()
+        parseCookiePairs(base).forEach { (name, value) -> merged[name] = value }
+        overrides.forEach { (name, value) -> merged[name] = value }
+        return merged.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
 
     private fun parseCookiePairs(raw: String): List<Pair<String, String>> {

@@ -231,13 +231,23 @@
 实现：
 
 - 任意登录页（JW / 电费 / ehall / 零信任代理）出现 `CASTGC` 都会写入
-  `auth_credentials` 的 `ecut_cas_master`（只保留 ticket 本身，不复制代理域的 `route`/`JSESSIONID`）。
+  `auth_credentials` 的 `ecut_cas_master`。
+- **CAS 主域必须整套保存**：`CASTGC` + `route` + `JSESSIONID`。CAS 是集群，
+  `route` 是粘性会话路由；只存 `CASTGC` 时下一次换票可能落到没有该 TGT 的节点，
+  表现为“刚登录就提示过期”。从零信任代理域镜像 `CASTGC` 时只取 ticket，
+  并与主域已有 Cookie 合并，避免覆盖掉 `route`。
 - `CasSsoManager.ensureServiceSession(serviceUrl)`：
   `GET /authserver/login?service=<encoded serviceUrl>` → CAS 302 回 service 并带 ticket
   → service 下发自己的 `JSESSIONID`，由 `CampusCookieJar` 自动落库。
+  只有最终响应为 2xx 且已离开 CAS 域才算换票成功（正方 `jziotlogin` 校验 ticket 失败会返回 500）。
 - 各原生客户端在“会话过期”时自动换票并重试一次：
   `JwAdapter`（仅校内直连）、`XgwxElectricityClient`、`CampusCardClient`。
-- 所有“去登录”统一进入 `Routes.LOGIN` → `CampusEndpoints.CAS_LOGIN`，
+- 校内登录（`Routes.LOGIN`）直接打开教务 SSO 页，由 WebView 执行完整重定向，
+  一次同时拿到 `CASTGC` 和教务 `JSESSIONID` 并保存，不再依赖 OkHttp 静默换票。
+- 校外登录走 CAS（落到 ehall）；教务同步必须在零信任门户打开一次“新教务管理系统”。
+  只有代理域名 `172-20-130-13.atrust.ecut.edu.cn` 的会话才算 `ecut_jw_proxy`，
+  门户主页 `atrust1.ecut.edu.cn` 的 Cookie 不算。
+- 所有“去登录”统一进入 `Routes.LOGIN`，
   登录成功后落到 ehall 一卡通页并自动保存 CASTGC，不再按模块分别登录。
 - 零信任代理域名下拿到的 `CASTGC` 会镜像到 CAS 主域，先登零信任也能解锁电费/校园卡。
 
