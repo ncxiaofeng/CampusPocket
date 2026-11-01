@@ -80,9 +80,11 @@ keyPassword=******
 > 正式签名使用项目外的专用 `release.jks`（`CampusPocket-keys/`）；`keystore.properties` 不入库，
 > 请离线备份密钥与密码。换签名后旧调试包无法覆盖安装。
 
-### 本地构建参数（不入库）
+### 运行期第三方参数（不编进 APK）
 
-`local.properties` 里可配置第三方 H5 的签名 / 系统参数：
+APK 不再包含第三方的固定签名 / 系统参数。首次使用下列功能前，打开
+**更多 → 高级配置**，把电脑上 `local.properties` 里的三行复制到手机剪贴板，
+再点「从剪贴板导入」：
 
 ```properties
 ujing.hmac.key=...
@@ -90,7 +92,9 @@ electricity.operator.pwd=...
 huilife.app.sign.salt=...
 ```
 
-未配置时，U净洗衣、宿舍电费与慧生活设备端登录会给出明确提示，其它功能不受影响。公开仓库不包含这些值。
+这些值只保存在手机本地，用 Android Keystore 的 AES-GCM 加密；公开仓库和 APK
+都不包含明文。未配置时，U净洗衣、宿舍电费与慧生活设备端登录会提示去高级配置，
+其它功能不受影响。
 
 ## 目录
 
@@ -111,7 +115,7 @@ app/src/main/java/com/ecut/campuspocket/
 - 登录页始终是学校官方页面；App 不注入 JS 读取表单。
 - 退出登录会清空 `auth_credentials`、`cookies`、课表与电费缓存，并清空 WebView Cookie。
 - 应用禁止备份（`allowBackup=false`），数据库与偏好不参与云备份 / 设备迁移。
-- U净验证码的 HMAC key 与宿舍缴费的 `operatorPwd` 已改为构建期注入（`local.properties` → `BuildConfig`），公开仓库不包含明文；未配置时对应功能会明确提示。
+- U净验证码的 HMAC key、宿舍缴费的 `operatorPwd` 与慧生活设备登录盐已改为**运行期配置**（更多 → 高级配置），用 Android Keystore 加密保存在本机；公开仓库和 APK 都不包含明文。
 
 ## 配套抓包工具
 

@@ -120,8 +120,10 @@ import com.ecut.campuspocket.ui.screens.HuiLifeScreen
 import com.ecut.campuspocket.ui.screens.LibrarySeatsScreen
 import com.ecut.campuspocket.ui.screens.LoginWebViewScreen
 import com.ecut.campuspocket.ui.screens.MoreScreen
+import com.ecut.campuspocket.ui.screens.MissingConfigScreen
 import com.ecut.campuspocket.ui.screens.NoticesScreen
 import com.ecut.campuspocket.ui.screens.PlaceholderScreen
+import com.ecut.campuspocket.ui.screens.RuntimeConfigScreen
 import com.ecut.campuspocket.ui.screens.ScheduleScreen
 import com.ecut.campuspocket.ui.screens.SyncScreen
 import com.ecut.campuspocket.ui.screens.TodayScreen
@@ -419,10 +421,21 @@ fun CampusPocketRoot(
                 // 直接打开宿舍缴费页：已有 CASTGC 时静默 SSO；
                 // 没有时在同一次 WebView 里完成 CAS 登录并保存 xgwx 会话，
                 // 不再依赖 OkHttp 对集群粘性 Cookie 的静默换票。
-                LoginWebViewScreen(
-                    target = CampusEndpoints.ELECTRICITY_LOGIN,
-                    onBack = { navController.popBackStack() }
-                )
+                val operatorPwd = AppContainer.runtimeConfig.get().electricityOperatorPwd
+                if (operatorPwd.isBlank()) {
+                    MissingConfigScreen(
+                        title = "宿舍电费登录",
+                        message = "电费 H5 需要本机的 operatorPwd 参数。它不再编进 APK，" +
+                            "请先在「高级配置」里填写。",
+                        onOpenConfig = { navController.navigate(Routes.ADVANCED_CONFIG) },
+                        onBack = { navController.popBackStack() }
+                    )
+                } else {
+                    LoginWebViewScreen(
+                        target = CampusEndpoints.electricityLogin(operatorPwd),
+                        onBack = { navController.popBackStack() }
+                    )
+                }
             }
             composable(Routes.SYNC) {
                 SyncScreen(
@@ -514,7 +527,8 @@ fun CampusPocketRoot(
             composable(Routes.ELECTRICITY) {
                 ElectricityScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenLogin = { navController.navigate(Routes.ELECTRICITY_LOGIN) }
+                    onOpenLogin = { navController.navigate(Routes.ELECTRICITY_LOGIN) },
+                    onOpenConfig = { navController.navigate(Routes.ADVANCED_CONFIG) }
                 )
             }
             composable(Routes.EHALL) {
@@ -602,6 +616,9 @@ fun CampusPocketRoot(
                     onBack = { navController.popBackStack() },
                     onOpenPrivacy = { navController.navigate(Routes.PRIVACY) }
                 )
+            }
+            composable(Routes.ADVANCED_CONFIG) {
+                RuntimeConfigScreen(onBack = { navController.popBackStack() })
             }
             composable(Routes.AUTO_LOGIN) {
                 AutoLoginScreen(onBack = { navController.popBackStack() })

@@ -3,6 +3,7 @@ package com.ecut.campuspocket
 import android.content.Context
 import com.ecut.campuspocket.data.AppPreferences
 import com.ecut.campuspocket.data.CredentialVault
+import com.ecut.campuspocket.data.RuntimeConfigStore
 import com.ecut.campuspocket.data.local.CampusDatabase
 import com.ecut.campuspocket.data.location.DeviceLocationProvider
 import com.ecut.campuspocket.data.remote.ElectricitySource
@@ -71,6 +72,11 @@ object AppContainer {
         CredentialVault(requireContext())
     }
 
+    /** 电费 operatorPwd / U净 HMAC / 慧生活设备盐，运行期配置并加密保存。 */
+    val runtimeConfig: RuntimeConfigStore by lazy {
+        RuntimeConfigStore(requireContext())
+    }
+
     val database: CampusDatabase by lazy {
         CampusDatabase.create(requireContext())
     }
@@ -110,7 +116,11 @@ object AppContainer {
 
     val xgwxElectricityClient: XgwxElectricityClient by lazy {
         // 宿舍缴费过期时会 302 到 CAS；允许跟随重定向，用本地 CASTGC 自动换票。
-        XgwxElectricityClient(baseHttpClient, ssoManager = casSsoManager)
+        XgwxElectricityClient(
+            client = baseHttpClient,
+            ssoManager = casSsoManager,
+            operatorPwdProvider = { runtimeConfig.get().electricityOperatorPwd }
+        )
     }
 
     val xgwxElectricityRepository: XgwxElectricityRepository by lazy {
@@ -154,7 +164,11 @@ object AppContainer {
             ssoManager = casSsoManager,
             vault = credentialVault,
             preferences = preferences,
-            autoLoginFactory = { casAutoLogin }
+            autoLoginFactory = { casAutoLogin },
+            electricityIndexUrlProvider = {
+                val pwd = runtimeConfig.get().electricityOperatorPwd
+                if (pwd.isBlank()) "" else CampusEndpoints.electricityIndexUrl(pwd)
+            }
         )
     }
 
@@ -199,7 +213,10 @@ object AppContainer {
     }
 
     val ujingClient: UjingClient by lazy {
-        UjingClient(baseHttpClient)
+        UjingClient(
+            client = baseHttpClient,
+            hmacKeyProvider = { runtimeConfig.get().ujingHmacKey }
+        )
     }
 
     val ujingRepository: UjingRepository by lazy {
@@ -215,7 +232,10 @@ object AppContainer {
     }
 
     val huiLifeClient: HuiLifeClient by lazy {
-        HuiLifeClient(baseHttpClient)
+        HuiLifeClient(
+            client = baseHttpClient,
+            appSignSaltProvider = { runtimeConfig.get().huilifeAppSignSalt }
+        )
     }
 
     val huiLifeRepository: HuiLifeRepository by lazy {

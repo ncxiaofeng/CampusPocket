@@ -28,7 +28,8 @@ class SessionRecoveryManager(
     private val ssoManager: CasSsoManager,
     private val vault: CredentialVault,
     private val preferences: AppPreferences,
-    private val autoLoginFactory: () -> CasAutoLogin
+    private val autoLoginFactory: () -> CasAutoLogin,
+    private val electricityIndexUrlProvider: () -> String
 ) {
 
     private val mutex = Mutex()
@@ -77,7 +78,10 @@ class SessionRecoveryManager(
         }
         // 电费 service 换票失败不一定代表本机 xgwx 会话不可用；
         // 仍交给上层重试一次真实接口，再由错误信息决定是否让用户登录。
-        ssoManager.ensureServiceSession(CampusEndpoints.ELECTRICITY_INDEX_URL)
+        val electricityUrl = runCatching { electricityIndexUrlProvider() }.getOrDefault("")
+        if (electricityUrl.isNotBlank()) {
+            ssoManager.ensureServiceSession(electricityUrl)
+        }
         casResult
     }
 }

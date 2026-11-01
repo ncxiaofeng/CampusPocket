@@ -137,6 +137,13 @@ fun MoreScreen(
             MoreItem("跑", CourseRose, "阳光跑记录", "闪动校园跑步数据（只读）", null) { onNavigate(Routes.RUN) }
         ),
         "其他" to listOf(
+            MoreItem(
+                "配",
+                WarningAmber,
+                "高级配置",
+                "电费 / U净 / 慧生活设备参数（本机加密）",
+                "设置"
+            ) { onNavigate(Routes.ADVANCED_CONFIG) },
             MoreItem("隐", Color(0xFF607D8B), "隐私说明", "凭据如何保存在本机", null) { onNavigate(Routes.PRIVACY) },
             MoreItem(
                 "关",

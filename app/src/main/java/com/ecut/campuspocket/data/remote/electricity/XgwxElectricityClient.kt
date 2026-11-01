@@ -1,6 +1,7 @@
 package com.ecut.campuspocket.data.remote.electricity
 
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.ConfigurationRequiredException
 import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonArray
@@ -34,15 +35,17 @@ data class XgwxSnapshot(
 class XgwxElectricityClient(
     private val client: OkHttpClient,
     private val baseUrl: String = CampusEndpoints.ELECTRICITY_H5_BASE,
-    private val ssoManager: CasSsoManager? = null
+    private val ssoManager: CasSsoManager? = null,
+    private val operatorPwdProvider: () -> String
 ) {
 
     suspend fun fetchSnapshot(): XgwxSnapshot = withContext(Dispatchers.IO) {
-        val userId = loadIndexUserId()
+        val indexUrl = indexUrl()
+        val userId = loadIndexUserId(indexUrl)
         val houseJson = postForm(
             path = "/app/app/api/user/searchBindHouseListForMoney",
             body = FormBody.Builder().add("userid", userId).build(),
-            referer = CampusEndpoints.ELECTRICITY_INDEX_URL
+            referer = indexUrl
         )
         val root = parseObject(houseJson)
         if (root.string("ret") != "1") {
@@ -76,15 +79,25 @@ class XgwxElectricityClient(
      * 会话过期时页面会 302 到 CAS 登录页，拿不到 userid。
      * 此时用本机保存的 CASTGC 静默换票，再重试一次，用户不需要重新登录。
      */
-    private suspend fun loadIndexUserId(): String {
-        val first = get(CampusEndpoints.ELECTRICITY_INDEX_URL)
+    private suspend fun loadIndexUserId(indexUrl: String): String {
+        val first = get(indexUrl)
         extractUserId(first)?.let { return it }
 
-        if (ssoManager?.ensureServiceSession(CampusEndpoints.ELECTRICITY_INDEX_URL) == true) {
-            val second = get(CampusEndpoints.ELECTRICITY_INDEX_URL)
+        if (ssoManager?.ensureServiceSession(indexUrl) == true) {
+            val second = get(indexUrl)
             extractUserId(second)?.let { return it }
         }
         throw SessionExpiredException("统一认证已过期，请重新登录")
+    }
+
+    private fun indexUrl(): String {
+        val operatorPwd = operatorPwdProvider()
+        if (operatorPwd.isBlank()) {
+            throw ConfigurationRequiredException(
+                "未配置电费参数：请在「更多 → 高级配置」填写 operatorPwd"
+            )
+        }
+        return CampusEndpoints.electricityIndexUrl(operatorPwd)
     }
 
     private fun extractUserId(html: String): String? =

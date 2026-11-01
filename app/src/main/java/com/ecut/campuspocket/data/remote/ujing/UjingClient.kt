@@ -1,7 +1,7 @@
 package com.ecut.campuspocket.data.remote.ujing
 
-import com.ecut.campuspocket.BuildConfig
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.ConfigurationRequiredException
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -113,7 +113,8 @@ data class UjingOrder(
  */
 class UjingClient(
     private val client: OkHttpClient,
-    private val baseUrl: String = CampusEndpoints.UJING_BASE_URL
+    private val baseUrl: String = CampusEndpoints.UJING_BASE_URL,
+    private val hmacKeyProvider: () -> String
 ) {
 
     suspend fun sendCaptcha(mobile: String) = withContext(Dispatchers.IO) {
@@ -366,8 +367,11 @@ class UjingClient(
     }
 
     private fun captchaSignature(): Triple<String, Long, String> {
-        if (BuildConfig.UJING_HMAC_KEY.isBlank()) {
-            throw IOException("U净签名密钥未配置（local.properties: ujing.hmac.key）")
+        val hmacKey = hmacKeyProvider()
+        if (hmacKey.isBlank()) {
+            throw ConfigurationRequiredException(
+                "未配置 U净 HMAC key：请在「更多 → 高级配置」填写"
+            )
         }
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
             .joinToString("") { "%02x".format(it) }
@@ -375,7 +379,7 @@ class UjingClient(
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(
             SecretKeySpec(
-                BuildConfig.UJING_HMAC_KEY.toByteArray(Charsets.UTF_8),
+                hmacKey.toByteArray(Charsets.UTF_8),
                 "HmacSHA256"
             )
         )

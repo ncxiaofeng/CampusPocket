@@ -31,11 +31,14 @@ class CasSsoManagerTest {
 
     @Test
     fun `electricity service url encodes its query`() {
-        val url = CasSsoManager.buildServiceLoginUrl(CampusEndpoints.ELECTRICITY_INDEX_URL)
+        val url = CasSsoManager.buildServiceLoginUrl(
+            CampusEndpoints.electricityIndexUrl("test-operator-pwd")
+        )
         assertTrue(
             url.contains(
                 "service=https%3A%2F%2Fxgwx.ecut.edu.cn%2Fapp%2Fwechat%2Findex.jsp%3FappId%3D"
             )
         )
+        assertTrue(url.contains("operatorPwd%3Dtest-operator-pwd"))
     }
 }

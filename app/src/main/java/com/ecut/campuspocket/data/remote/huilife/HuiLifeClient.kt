@@ -1,8 +1,8 @@
 package com.ecut.campuspocket.data.remote.huilife
 
 import android.util.Log
-import com.ecut.campuspocket.BuildConfig
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.ConfigurationRequiredException
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -31,7 +31,8 @@ class HuiLifeTokenExpiredException(
  * 只做用户主动确认后的启动/停止，不自动接水、不充值。
  */
 class HuiLifeClient(
-    private val client: OkHttpClient
+    private val client: OkHttpClient,
+    private val appSignSaltProvider: () -> String = { "" }
 ) {
 
     suspend fun captcha(sessionKey: String): ByteArray = withContext(Dispatchers.IO) {
@@ -331,8 +332,12 @@ class HuiLifeClient(
     }
 
     private fun signAppLogin(phone: String, smsCode: String): String {
-        val salt = BuildConfig.HUILIFE_APP_SIGN_SALT
-        if (salt.isBlank()) throw IOException("未配置慧生活设备登录签名，请更新 App 配置")
+        val salt = appSignSaltProvider()
+        if (salt.isBlank()) {
+            throw ConfigurationRequiredException(
+                "未配置慧生活设备登录盐：请在「更多 → 高级配置」填写"
+            )
+        }
         return signAppLogin(phone, smsCode, salt)
     }
 

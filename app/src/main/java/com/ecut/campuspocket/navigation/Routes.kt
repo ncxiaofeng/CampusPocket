@@ -34,4 +34,5 @@ object Routes {
     const val RUN = "run"
     const val PRIVACY = "privacy"
     const val ABOUT = "about"
+    const val ADVANCED_CONFIG = "advanced_config"
 }

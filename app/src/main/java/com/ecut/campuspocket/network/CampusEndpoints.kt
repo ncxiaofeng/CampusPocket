@@ -1,6 +1,5 @@
 package com.ecut.campuspocket.network
 
-import com.ecut.campuspocket.BuildConfig
 
 /**
  * 登录目标描述：WebView 打开哪个入口、抓哪些域名的 Cookie、如何判断登录完成。
@@ -233,17 +232,20 @@ object CampusEndpoints {
 
     /** 宿舍水电缴费 H5（今日校园“宿舍缴费”里的学生宿舍缴费）。 */
     const val ELECTRICITY_H5_BASE = "https://xgwx.ecut.edu.cn"
-    // operatorPwd 是宿舍缴费 H5 的系统参数，公开仓库中不写死；
-    // 构建时从 local.properties 的 electricity.operator.pwd 注入。
-    val ELECTRICITY_INDEX_URL =
+
+    /**
+     * operatorPwd 是宿舍缴费 H5 的固定系统参数，不再编进 APK；
+     * 用户在「更多 → 高级配置」填写后运行期拼接。
+     */
+    fun electricityIndexUrl(operatorPwd: String): String =
         "https://xgwx.ecut.edu.cn/app/wechat/index.jsp" +
             "?appId=wx3be3089d48d67c4e&operatorId=admin" +
-            "&operatorPwd=" + BuildConfig.ELECTRICITY_OPERATOR_PWD
+            "&operatorPwd=" + java.net.URLEncoder.encode(operatorPwd, "UTF-8")
 
-    val ELECTRICITY_LOGIN = LoginTarget(
+    fun electricityLogin(operatorPwd: String): LoginTarget = LoginTarget(
         systemId = SYSTEM_ELECTRICITY,
         title = "宿舍电费登录",
-        startUrl = ELECTRICITY_INDEX_URL,
+        startUrl = electricityIndexUrl(operatorPwd),
         primaryHost = "xgwx.ecut.edu.cn",
         extraCookieUrls = listOf(AUTH_SERVER_LOGIN_URL),
         requiredPrimaryCookie = "jsessionid",

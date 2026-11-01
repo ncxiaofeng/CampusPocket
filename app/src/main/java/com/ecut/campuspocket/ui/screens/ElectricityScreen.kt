@@ -59,6 +59,7 @@ import java.util.Locale
 fun ElectricityScreen(
     onBack: () -> Unit,
     onOpenLogin: () -> Unit = {},
+    onOpenConfig: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: ElectricityViewModel = viewModel(factory = ElectricityViewModel.Factory)
 ) {
@@ -173,6 +174,14 @@ fun ElectricityScreen(
                         onClick = { openLogin() },
                         contentPadding = PaddingValues(horizontal = 6.dp)
                     ) { Text("去登录") }
+                } else if (viewModel.message.orEmpty().contains("配置")) {
+                    TextButton(
+                        onClick = {
+                            viewModel.clearMessage()
+                            onOpenConfig()
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp)
+                    ) { Text("去配置") }
                 } else {
                     TextButton(
                         onClick = { viewModel.clearMessage() },
