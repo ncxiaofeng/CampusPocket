@@ -4,6 +4,7 @@ import com.ecut.campuspocket.data.AppPreferences
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeBill
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeClient
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeDevice
+import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceStatus
 import com.ecut.campuspocket.data.remote.huilife.HuiLifePlatform
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeSession
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeTokenExpiredException
@@ -150,6 +151,35 @@ class HuiLifeRepository(
                 )
             )
         }
+
+    suspend fun fetchDeviceStatus(deviceId: String): Result<HuiLifeDeviceStatus> {
+        val app = appToken()
+        if (app != null) {
+            return client.fetchDeviceStatus(app, HuiLifePlatform.APP, deviceId)
+        }
+        val account = accountToken() ?: return Result.failure(
+            IllegalStateException("请先登录慧生活798")
+        )
+        return client.fetchDeviceStatus(account, HuiLifePlatform.ACCOUNT, deviceId)
+    }
+
+    suspend fun resolveQrDevice(qrId: String): Result<String> {
+        val app = appToken() ?: return Result.failure(
+            IllegalStateException("扫码解析需要先完成「设备控制」登录")
+        )
+        return client.resolveQrDevice(app, qrId)
+    }
+
+    suspend fun probeDeviceStatus(deviceId: String): Result<String> {
+        val app = appToken()
+        if (app != null) {
+            return client.probeDeviceStatus(app, HuiLifePlatform.APP, deviceId)
+        }
+        val account = accountToken() ?: return Result.failure(
+            IllegalStateException("请先登录慧生活798")
+        )
+        return client.probeDeviceStatus(account, HuiLifePlatform.ACCOUNT, deviceId)
+    }
 
     suspend fun startDevice(deviceId: String): Result<String> {
         val token = appToken() ?: return Result.failure(

@@ -23,12 +23,16 @@ android {
         applicationId = "com.ecut.campuspocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.6.0"
+        versionCode = 14
+        versionName = "0.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
 
+        // 分发只保留手机常见架构，去掉 x86 模拟器库（ML Kit/SQLCipher 各占数 MB）。
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {
@@ -62,6 +66,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -113,6 +118,9 @@ dependencies {
 
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.coil.compose)
+    // 798 设备二维码扫描（离线 ML Kit，不上传图片）
+    implementation("com.github.T8RIN.QuickieExtended:quickie-bundled:1.14.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation(libs.junit)
 }

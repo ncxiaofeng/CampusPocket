@@ -4,6 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -35,6 +38,10 @@ class RuntimeConfigStore(context: Context) {
     @Volatile
     private var cached: RuntimeConfig? = null
 
+    /** 配置保存/清空时递增，页面可以据此重新读取 [get]。 */
+    private val _version = MutableStateFlow(0)
+    val version: StateFlow<Int> = _version.asStateFlow()
+
     fun get(): RuntimeConfig {
         cached?.let { return it }
         val loaded = load()
@@ -59,11 +66,13 @@ class RuntimeConfigStore(context: Context) {
             .putString(KEY_PAYLOAD, Base64.encodeToString(payload, Base64.NO_WRAP))
             .apply()
         cached = config
+        _version.value++
     }
 
     fun clear() {
         prefs.edit().remove(KEY_PAYLOAD).apply()
         cached = RuntimeConfig()
+        _version.value++
         runCatching {
             val keyStore = keyStore()
             if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)

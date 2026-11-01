@@ -15,6 +15,8 @@ import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.data.AppPreferences
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeClient
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeDevice
+import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceIdParser
+import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceStatus
 import com.ecut.campuspocket.data.remote.huilife.HuiLifePlatform
 import com.ecut.campuspocket.data.repository.HuiLifeDashboard
 import com.ecut.campuspocket.data.repository.HuiLifeRepository
@@ -48,6 +50,56 @@ class HuiLifeViewModel(
         private set
     var loginFormVisible by mutableStateOf(false)
         private set
+    var scannedDevices by mutableStateOf(preferences.huiLifeScannedDevices)
+        private set
+    var statusById by mutableStateOf<Map<String, HuiLifeDeviceStatus>>(emptyMap())
+        private set
+
+    private var statusRefreshing = false
+
+    /** 设备列表 + 用户扫过但接口没返回的编号；只有扫码的设备能启动。 */
+    val allDevices: List<HuiLifeDevice>
+        get() {
+            val known = dashboard?.devices.orEmpty()
+            val extras = scannedDevices
+                .filter { id -> known.none { it.id == id } }
+                .map {
+                    HuiLifeDevice(
+                        id = it,
+                        name = "扫码设备",
+                        detail = "已添加，等待状态同步"
+                    )
+                }
+            return known + extras
+        }
+
+    fun isScanned(deviceId: String): Boolean = deviceId in scannedDevices
+
+    fun statusFor(deviceId: String): HuiLifeDeviceStatus? = statusById[deviceId]
+
+    /** 已扫码 + 状态为空闲/在线，才允许启动；使用中/离线/禁用都不显示启动。 */
+    fun canStart(deviceId: String): Boolean =
+        appLoggedIn && isScanned(deviceId) && (statusById[deviceId]?.canStart ?: true)
+
+    fun refreshStatuses() {
+        if (statusRefreshing) return
+        if (!accountLoggedIn && !appLoggedIn) return
+        val devices = allDevices
+        if (devices.isEmpty()) return
+        statusRefreshing = true
+        viewModelScope.launch {
+            try {
+                val updated = statusById.toMutableMap()
+                devices.forEach { device ->
+                    repository.fetchDeviceStatus(device.id)
+                        .onSuccess { updated[device.id] = it }
+                }
+                statusById = updated
+            } finally {
+                statusRefreshing = false
+            }
+        }
+    }
 
     private var sessionKey = ""
 
@@ -171,6 +223,7 @@ class HuiLifeViewModel(
             accountLoggedIn = repository.hasAccount()
             appLoggedIn = repository.hasApp()
             loading = false
+            refreshStatuses()
         }
     }
 
@@ -179,7 +232,72 @@ class HuiLifeViewModel(
             message = "需要先完成「设备控制」登录"
             return
         }
+        if (!isScanned(device.id)) {
+            message = "请先扫描设备二维码，确认你就在设备旁边后再启动"
+            return
+        }
+        if (statusById[device.id]?.canStart == false) {
+            message = "设备当前${statusById[device.id]?.label.orEmpty()}，不能启动"
+            return
+        }
         confirmDevice = device
+    }
+
+    fun addScannedDevice(raw: String) {
+        val parsed = HuiLifeDeviceIdParser.parse(raw)
+        val qrId = parsed.qrId
+        if (qrId != null) {
+            if (!appLoggedIn) {
+                message = "这个二维码需要设备控制登录后才能解析"
+                return
+            }
+            if (loading) return
+            viewModelScope.launch {
+                loading = true
+                repository.resolveQrDevice(qrId).fold(
+                    onSuccess = { id ->
+                        markScanned(id)
+                    },
+                    onFailure = { message = "二维码解析失败：${it.message}" }
+                )
+                loading = false
+            }
+            return
+        }
+        val id = parsed.deviceId
+        if (id.isNullOrBlank()) {
+            message = "二维码里没有识别到设备编号"
+            return
+        }
+        markScanned(id)
+    }
+
+    private fun markScanned(id: String) {
+        scannedDevices = preferences.markHuiLifeDeviceScanned(id)
+        val known = dashboard?.devices?.firstOrNull { it.id == id }
+        message = if (known != null) {
+            "已扫码：${known.name}，现在可以启动"
+        } else {
+            "已添加设备 $id；状态同步后即可启动"
+        }
+        refreshStatuses()
+    }
+
+    fun removeScannedDevice(device: HuiLifeDevice) {
+        scannedDevices = preferences.removeHuiLifeScannedDevice(device.id)
+        message = "已取消 ${device.name} 的扫码授权，之后只能查看"
+    }
+
+    fun probeStatus(device: HuiLifeDevice) {
+        if (loading) return
+        viewModelScope.launch {
+            loading = true
+            repository.probeDeviceStatus(device.id).fold(
+                onSuccess = { message = "设备状态诊断（${device.id}）：\n$it" },
+                onFailure = { message = "设备状态诊断失败：${it.message}" }
+            )
+            loading = false
+        }
     }
 
     fun confirmStart() {
@@ -192,22 +310,12 @@ class HuiLifeViewModel(
                 onFailure = { message = "启动失败：${it.message}" }
             )
             loading = false
+            refreshStatuses()
         }
     }
 
     fun cancelStart() {
         confirmDevice = null
-    }
-
-    fun stop(device: HuiLifeDevice) {
-        viewModelScope.launch {
-            loading = true
-            repository.stopDevice(device.id).fold(
-                onSuccess = { message = "${device.name}：$it" },
-                onFailure = { message = "停止失败：${it.message}" }
-            )
-            loading = false
-        }
     }
 
     fun openLogin(platform: HuiLifePlatform) {

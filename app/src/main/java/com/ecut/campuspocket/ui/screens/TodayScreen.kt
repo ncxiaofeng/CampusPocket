@@ -57,10 +57,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.data.ClassTimes
 import com.ecut.campuspocket.data.local.CourseEntity
 import com.ecut.campuspocket.data.remote.card.CampusCardBill
 import com.ecut.campuspocket.data.remote.card.CampusCardOverview
+import com.ecut.campuspocket.data.remote.chaoxing.ChaoxingSnapshot
+import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceStatus
+import com.ecut.campuspocket.data.repository.HuiLifeDashboard
 import com.ecut.campuspocket.data.remote.weather.WeatherClient
 import com.ecut.campuspocket.data.remote.weather.WeatherDaily
 import com.ecut.campuspocket.data.remote.weather.WeatherHourly
@@ -91,9 +95,11 @@ import com.ecut.campuspocket.ui.theme.WeatherRain
 import com.ecut.campuspocket.ui.theme.WeatherSky
 import androidx.core.content.ContextCompat
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
@@ -114,12 +120,16 @@ fun TodayScreen(
     onOpenElectricity: () -> Unit,
     onOpenCampusCard: () -> Unit,
     onOpenSchedule: () -> Unit,
+    onOpenChaoxing: () -> Unit,
+    onOpenHuiLife: () -> Unit,
     modifier: Modifier = Modifier,
     vpnAuthenticated: Boolean = false,
     scheduleViewModel: ScheduleViewModel = viewModel(factory = ScheduleViewModel.Factory),
     electricityViewModel: ElectricityViewModel = viewModel(factory = ElectricityViewModel.Factory),
     campusCardViewModel: CampusCardViewModel = viewModel(factory = CampusCardViewModel.Factory),
-    weatherViewModel: WeatherViewModel = viewModel(factory = WeatherViewModel.Factory)
+    weatherViewModel: WeatherViewModel = viewModel(factory = WeatherViewModel.Factory),
+    chaoxingViewModel: ChaoxingViewModel = viewModel(factory = ChaoxingViewModel.Factory),
+    huiLifeViewModel: HuiLifeViewModel = viewModel(factory = HuiLifeViewModel.Factory)
 ) {
     val today = remember { LocalDate.now() }
     val dateText = remember {
@@ -135,6 +145,10 @@ fun TodayScreen(
     }
     val courses by scheduleViewModel.courses.collectAsStateWithLifecycle()
     val electricityDays by electricityViewModel.days.collectAsStateWithLifecycle()
+    val configVersion by AppContainer.runtimeConfig.version.collectAsStateWithLifecycle()
+    val electricityConfigured = remember(configVersion) {
+        AppContainer.runtimeConfig.get().hasElectricity
+    }
     val todayIndex = today.dayOfWeek.value - 1
     val currentWeek = com.ecut.campuspocket.data.SemesterConfig.weekFor(today)
     val todayCourses = remember(courses, todayIndex, currentWeek) {
@@ -183,6 +197,8 @@ fun TodayScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         weatherViewModel.refreshIfStale()
         campusCardViewModel.ensureFresh()
+        chaoxingViewModel.refresh()
+        huiLifeViewModel.refresh()
     }
 
     val dayByEpoch = remember(electricityDays) {
@@ -237,15 +253,37 @@ fun TodayScreen(
         }
 
         item {
-            ElectricitySection(
-                yesterday = yesterdayDay,
-                latestBalance = latestBalanceDay?.balance,
-                latestBalanceAt = latestBalanceDay?.updatedAt,
-                chartLabels = chartLabels,
-                chartValues = chartValues,
-                hasChartData = hasChartData,
-                onOpenElectricity = onOpenElectricity
+            ChaoxingHomeCard(
+                snapshot = chaoxingViewModel.snapshot,
+                loggedIn = chaoxingViewModel.loggedIn,
+                loading = chaoxingViewModel.loading,
+                error = chaoxingViewModel.error,
+                onClick = onOpenChaoxing
             )
+        }
+
+        item {
+            HuiLifeHomeCard(
+                dashboard = huiLifeViewModel.dashboard,
+                statuses = huiLifeViewModel.statusById,
+                loggedIn = huiLifeViewModel.accountLoggedIn || huiLifeViewModel.appLoggedIn,
+                loading = huiLifeViewModel.loading,
+                onClick = onOpenHuiLife
+            )
+        }
+
+        if (electricityConfigured) {
+            item {
+                ElectricitySection(
+                    yesterday = yesterdayDay,
+                    latestBalance = latestBalanceDay?.balance,
+                    latestBalanceAt = latestBalanceDay?.updatedAt,
+                    chartLabels = chartLabels,
+                    chartValues = chartValues,
+                    hasChartData = hasChartData,
+                    onOpenElectricity = onOpenElectricity
+                )
+            }
         }
 
         item {
@@ -844,6 +882,207 @@ private fun WeatherHourPill(item: WeatherHourly, modifier: Modifier = Modifier) 
 }
 
 // ---------------------------------------------------------------------------
+@Composable
+private fun ChaoxingHomeCard(
+    snapshot: ChaoxingSnapshot?,
+    loggedIn: Boolean,
+    loading: Boolean,
+    error: String?,
+    onClick: () -> Unit
+) {
+    val ready = loggedIn && snapshot != null
+    val ongoingSigns = snapshot?.signs?.count { it.isOngoing } ?: 0
+    val pendingWorks = snapshot?.pendingWorks?.size ?: 0
+    val pendingExams = snapshot?.pendingExams?.size ?: 0
+    val totalWorks = snapshot?.works?.size ?: 0
+    val totalExams = snapshot?.exams?.size ?: 0
+    val nextTask = snapshot?.pendingWorks?.firstOrNull()
+        ?: snapshot?.pendingExams?.firstOrNull()
+    val hint = when {
+        !loggedIn -> "登录后查看作业 / 考试 / 签到提醒"
+        loading && snapshot == null -> "正在读取…"
+        error != null -> "读取失败，点此查看"
+        ready -> "作业 / 考试 / 签到提醒"
+        else -> "点此进入学习通"
+    }
+    AppCard(onClick = onClick) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(text = "习", color = CourseBlue, size = 38.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("学习通", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (error != null && loggedIn) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+                Text(
+                    "查看全部 ›",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HomeMetric(
+                    value = if (ready) "$ongoingSigns" else "—",
+                    label = "进行中签到",
+                    accent = if (ongoingSigns > 0) WarningAmber else null,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeMetric(
+                    value = if (ready) "$pendingWorks" else "—",
+                    label = if (ready) "待办作业 / 共 $totalWorks" else "待办作业",
+                    accent = if (pendingWorks > 0) CourseBlue else null,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeMetric(
+                    value = if (ready) "$pendingExams" else "—",
+                    label = if (ready) "待办考试 / 共 $totalExams" else "待办考试",
+                    accent = if (pendingExams > 0) CourseAmber else null,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (ready) {
+                Spacer(Modifier.height(12.dp))
+                ThinDivider()
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = nextTask?.let {
+                        "最近：${it.title} · ${it.statusLabel}"
+                    } ?: "暂无待办，进入学习通查看全部",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HuiLifeHomeCard(
+    dashboard: HuiLifeDashboard?,
+    statuses: Map<String, HuiLifeDeviceStatus>,
+    loggedIn: Boolean,
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    val devices = dashboard?.devices.orEmpty()
+    val wallet = dashboard?.wallet
+    val lastBill = dashboard?.bills?.firstOrNull()
+    val online = devices.count { statuses[it.id]?.label == "在线" }
+    val inUse = devices.count {
+        statuses[it.id]?.label == "使用中" || statuses[it.id]?.label == "启动中"
+    }
+    val deviceLabel = if (statuses.isEmpty()) {
+        "已登录设备"
+    } else {
+        "在线 $online / 使用中 $inUse"
+    }
+    val hint = when {
+        !loggedIn -> "登录后查看钱包余额与设备"
+        loading && dashboard == null -> "正在读取…"
+        dashboard != null -> "饮水 / 热水 / 扫码启动"
+        else -> "点此登录 / 刷新"
+    }
+    AppCard(onClick = onClick) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(text = "水", color = CourseTeal, size = 38.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("慧生活798", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    "查看全部 ›",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HomeMetric(
+                    value = wallet?.let { "¥%.2f".format(it.balance) } ?: "—",
+                    label = wallet?.name ?: "校园钱包",
+                    modifier = Modifier.weight(1f)
+                )
+                HomeMetric(
+                    value = if (dashboard != null) "${devices.size} 台" else "—",
+                    label = deviceLabel,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeMetric(
+                    value = lastBill?.let { "¥%.2f".format(it.amount) } ?: "—",
+                    label = "最近一笔",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (dashboard != null) {
+                Spacer(Modifier.height(12.dp))
+                ThinDivider()
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = lastBill?.let {
+                        "${homeBillTime(it.time)} · ${it.title} " + "¥%.2f".format(it.amount)
+                    } ?: "暂无消费记录，进入查看设备与账单",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeMetric(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    accent: Color? = null
+) {
+    Column(modifier) {
+        Text(
+            value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = accent ?: MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun homeBillTime(timestamp: Long): String {
+    if (timestamp <= 0) return "--"
+    return runCatching {
+        Instant.ofEpochMilli(timestamp)
+            .atZone(ZoneId.systemDefault())
+            .format(DateTimeFormatter.ofPattern("M/d HH:mm"))
+    }.getOrDefault("--")
+}
+
 // 电费
 // ---------------------------------------------------------------------------
 

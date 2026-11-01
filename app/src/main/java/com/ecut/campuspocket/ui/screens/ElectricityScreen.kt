@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,6 +65,7 @@ fun ElectricityScreen(
     viewModel: ElectricityViewModel = viewModel(factory = ElectricityViewModel.Factory)
 ) {
     val days by viewModel.days.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var range by rememberSaveable { mutableIntStateOf(7) }
     var awaitingLogin by rememberSaveable { mutableStateOf(false) }
     val today = LocalDate.now()
@@ -175,6 +177,10 @@ fun ElectricityScreen(
                         contentPadding = PaddingValues(horizontal = 6.dp)
                     ) { Text("去登录") }
                 } else if (viewModel.message.orEmpty().contains("配置")) {
+                    TextButton(
+                        onClick = { CampusTodayLauncher.open(context) },
+                        contentPadding = PaddingValues(horizontal = 6.dp)
+                    ) { Text("今日校园") }
                     TextButton(
                         onClick = {
                             viewModel.clearMessage()
@@ -420,6 +426,7 @@ private fun LegendDot(color: Color, label: String) {
 
 @Composable
 private fun EmptyElectricityCard(onOpenLogin: () -> Unit) {
+    val context = LocalContext.current
     AppCard(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)) {
         Row(verticalAlignment = Alignment.Top) {
             IconBadge(text = "电", color = WarningAmber, size = 36.dp)
@@ -441,6 +448,13 @@ private fun EmptyElectricityCard(onOpenLogin: () -> Unit) {
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Text("登录统一身份认证")
+                }
+                Spacer(Modifier.height(6.dp))
+                TextButton(
+                    onClick = { CampusTodayLauncher.open(context) },
+                    contentPadding = PaddingValues(horizontal = 0.dp)
+                ) {
+                    Text("打开今日校园查电费")
                 }
             }
         }

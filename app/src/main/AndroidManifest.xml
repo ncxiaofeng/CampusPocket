@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- 学习通签到/作业/考试提醒（Android 13+ 运行时申请） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 仅用于扫描慧生活798设备二维码；图片只在本地识别，不上传 -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- WorkManager 仅在普通后台任务中使用，不需要前台服务权限 -->
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE"
@@ -16,6 +18,7 @@
 
     <!-- 仅用于发现并唤起学校 aTrust 客户端，不读取其他应用数据。 -->
     <queries>
+        <package android:name="com.wisedu.cpdaily" />
         <package android:name="com.sangfor.trust" />
         <package android:name="com.sangfor.atrust" />
         <package android:name="com.sangfor.vpn.client.phone" />

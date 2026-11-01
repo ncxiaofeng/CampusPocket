@@ -20,6 +20,25 @@ data class HuiLifeDevice(
     val detail: String
 )
 
+/** `/ui/app/dev/status` 的关键字段。 */
+data class HuiLifeDeviceStatus(
+    val deviceStatus: Int,
+    val geneStatus: Int,
+    val endTimeMillis: Long = 0L
+) {
+    val label: String
+        get() = when {
+            deviceStatus == 0 -> "离线"
+            geneStatus == 98 -> "禁用"
+            geneStatus == 99 -> "在线"
+            geneStatus == 1 || geneStatus == 30 -> "启动中"
+            else -> "使用中"
+        }
+
+    val canStart: Boolean
+        get() = deviceStatus != 0 && geneStatus == 99
+}
+
 data class HuiLifeWallet(
     val name: String,
     val balance: Double

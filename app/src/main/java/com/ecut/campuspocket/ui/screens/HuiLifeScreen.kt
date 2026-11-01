@@ -1,9 +1,13 @@
 package com.ecut.campuspocket.ui.screens
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,15 +26,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +52,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeDiagnostics
 import com.ecut.campuspocket.data.remote.huilife.HuiLifePlatform
@@ -56,6 +67,11 @@ import com.ecut.campuspocket.ui.theme.CourseTeal
 import com.ecut.campuspocket.ui.theme.ErrorRed
 import com.ecut.campuspocket.ui.theme.TealPrimary
 import com.ecut.campuspocket.ui.theme.WarningAmber
+import io.github.g00fy2.quickie.QRResult
+import io.github.g00fy2.quickie.ScanCustomCode
+import io.github.g00fy2.quickie.config.BarcodeFormat
+import io.github.g00fy2.quickie.config.ScannerConfig
+import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -78,6 +94,69 @@ fun HuiLifeScreen(
     val dashboard = viewModel.dashboard
     val loggedIn = viewModel.accountLoggedIn || viewModel.appLoggedIn
     val showLogin = viewModel.loginFormVisible || !loggedIn
+
+    val scanner = rememberLauncherForActivityResult(ScanCustomCode()) { result ->
+        when (result) {
+            is QRResult.QRSuccess -> {
+                val raw = result.content.rawValue.orEmpty()
+                if (raw.isBlank()) {
+                    Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                } else {
+                    viewModel.addScannedDevice(raw)
+                }
+            }
+
+            is QRResult.QRError -> Toast.makeText(
+                context,
+                "扫码失败：${result.exception.localizedMessage ?: "请调整距离后重试"}",
+                Toast.LENGTH_LONG
+            ).show()
+
+            QRResult.QRMissingPermission -> Toast.makeText(
+                context,
+                "需要相机权限才能扫码",
+                Toast.LENGTH_LONG
+            ).show()
+
+            QRResult.QRUserCanceled -> Unit
+        }
+    }
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            scanner.launch(scannerConfig())
+        } else {
+            Toast.makeText(context, "需要相机权限才能扫码", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun launchScan() {
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            scanner.launch(scannerConfig())
+        } else {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    // 状态轮询：页面处于前台时每 10 秒刷新一次；退到后台/离开页面自动暂停。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(
+        lifecycleOwner,
+        loggedIn,
+        viewModel.dashboard?.devices?.size,
+        viewModel.scannedDevices.size
+    ) {
+        if (!loggedIn) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                viewModel.refreshStatuses()
+                delay(10_000)
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -105,7 +184,7 @@ fun HuiLifeScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "饮水 / 热水 / 淋浴 · 只读 + 手动启动",
+                    text = "饮水 / 热水 / 淋浴 · 扫码后手动启动 · 不提供停止",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -208,12 +287,24 @@ fun HuiLifeScreen(
                                 Text("我的设备", style = MaterialTheme.typography.titleSmall)
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    "${dashboard?.devices?.size ?: 0} 台",
+                                    "${viewModel.allDevices.size} 台",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                TextButton(
+                                    onClick = { launchScan() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.QrCodeScanner,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("扫码")
+                                }
                             }
-                            val devices = dashboard?.devices.orEmpty()
+                            val devices = viewModel.allDevices
                             if (devices.isEmpty()) {
                                 Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                                     Text(
@@ -266,10 +357,33 @@ fun HuiLifeScreen(
                                             )
                                         ) { Text("登录设备控制") }
                                     }
+                                    Spacer(Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { launchScan() },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(
+                                            horizontal = 12.dp,
+                                            vertical = 7.dp
+                                        )
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.QrCodeScanner,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("扫码添加设备")
+                                    }
                                 }
                                 Spacer(Modifier.height(10.dp))
                             } else {
                                 devices.forEachIndexed { index, device ->
+                                    val status = viewModel.statusFor(device.id)
+                                    val statusColor = when (status?.label) {
+                                        "使用中", "启动中" -> WarningAmber
+                                        "离线", "禁用" -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        else -> ChartPrimary
+                                    }
                                     ThinDivider(Modifier.padding(start = 16.dp))
                                     Row(
                                         modifier = Modifier
@@ -282,23 +396,55 @@ fun HuiLifeScreen(
                                         Column(Modifier.weight(1f)) {
                                             Text(device.name, style = MaterialTheme.typography.titleSmall)
                                             Text(
-                                                device.detail.ifBlank { device.id },
+                                                buildString {
+                                                    append(device.detail.ifBlank { device.id })
+                                                    if (status != null) {
+                                                        append(" · ").append(status.label)
+                                                    }
+                                                },
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = if (status != null) {
+                                                    statusColor
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
                                             )
                                         }
                                         if (viewModel.appLoggedIn) {
-                                            TextButton(onClick = { viewModel.stop(device) }) {
-                                                Text("停止", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                            Button(
-                                                onClick = { viewModel.askStart(device) },
-                                                shape = RoundedCornerShape(10.dp),
-                                                contentPadding = PaddingValues(
-                                                    horizontal = 12.dp,
-                                                    vertical = 6.dp
+                                            if (viewModel.isScanned(device.id)) {
+                                                TextButton(
+                                                    onClick = { viewModel.removeScannedDevice(device) },
+                                                    contentPadding = PaddingValues(horizontal = 6.dp)
+                                                ) {
+                                                    Text(
+                                                        "取消",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                if (viewModel.canStart(device.id)) {
+                                                    Button(
+                                                        onClick = { viewModel.askStart(device) },
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        contentPadding = PaddingValues(
+                                                            horizontal = 12.dp,
+                                                            vertical = 6.dp
+                                                        )
+                                                    ) { Text("启动") }
+                                                } else if (status != null) {
+                                                    Text(
+                                                        status.label,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = statusColor
+                                                    )
+                                                }
+                                            } else {
+                                                Text(
+                                                    "仅查看 · 扫码后可启动",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
-                                            ) { Text("启动") }
+                                            }
                                         } else {
                                             Text(
                                                 "需设备登录",
@@ -378,7 +524,8 @@ fun HuiLifeScreen(
 
                 item {
                     Text(
-                        "启动/停止只会在你点击并确认后发送；不自动接水、不充值。余额与账单来自慧生活接口，以官方小程序为准。",
+                        "只有你扫过二维码的设备才显示「启动」；不提供停止；不自动接水、不充值。" +
+                            "余额与账单来自慧生活接口，以官方小程序为准。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -621,6 +768,15 @@ private fun formatBillTime(timestamp: Long): String {
             .atZone(ZoneId.systemDefault())
             .format(DateTimeFormatter.ofPattern("M/d HH:mm"))
     }.getOrDefault("--")
+}
+
+private fun scannerConfig(): ScannerConfig = ScannerConfig.build {
+    // 只识别二维码，减少无关格式分析；图片只在本地处理。
+    setBarcodeFormats(listOf(BarcodeFormat.QR_CODE))
+    setHapticSuccessFeedback(true)
+    setShowTorchToggle(true)
+    setShowCloseButton(true)
+    setKeepScreenOn(true)
 }
 
 private fun openHuiLifeAlipay(context: Context) {

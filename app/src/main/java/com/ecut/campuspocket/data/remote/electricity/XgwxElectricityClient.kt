@@ -94,7 +94,7 @@ class XgwxElectricityClient(
         val operatorPwd = operatorPwdProvider()
         if (operatorPwd.isBlank()) {
             throw ConfigurationRequiredException(
-                "未配置电费参数：请在「更多 → 高级配置」填写 operatorPwd"
+                "未配置电费参数：公开版不内置；可在「更多 → 高级配置」填写，或直接用今日校园查电费"
             )
         }
         return CampusEndpoints.electricityIndexUrl(operatorPwd)

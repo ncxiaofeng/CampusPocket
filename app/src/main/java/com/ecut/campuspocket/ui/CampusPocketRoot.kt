@@ -329,6 +329,8 @@ fun CampusPocketRoot(
                     onOpenElectricity = { navController.navigate(Routes.ELECTRICITY) },
                     onOpenCampusCard = { openTab(Routes.CAMPUS_CARD) },
                     onOpenSchedule = { openTab(Routes.SCHEDULE) },
+                    onOpenChaoxing = { navController.navigate(Routes.CHAOXING) },
+                    onOpenHuiLife = { navController.navigate(Routes.WATER) },
                     vpnAuthenticated = vpnCredential != null
                 )
             }
@@ -425,8 +427,8 @@ fun CampusPocketRoot(
                 if (operatorPwd.isBlank()) {
                     MissingConfigScreen(
                         title = "宿舍电费登录",
-                        message = "电费 H5 需要本机的 operatorPwd 参数。它不再编进 APK，" +
-                            "请先在「高级配置」里填写。",
+                        message = "电费 H5 需要本机的 operatorPwd 参数，它不再编进 APK。" +
+                            "可以先用今日校园查/缴费，或在「高级配置」里填写。",
                         onOpenConfig = { navController.navigate(Routes.ADVANCED_CONFIG) },
                         onBack = { navController.popBackStack() }
                     )

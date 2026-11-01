@@ -223,6 +223,83 @@ class HuiLifeClient(
         }
     }
 
+    /** 读取单台设备的实时状态（只读，10 秒轮询用）。 */
+    suspend fun fetchDeviceStatus(
+        token: String,
+        platform: HuiLifePlatform,
+        deviceId: String
+    ): Result<HuiLifeDeviceStatus> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = getJson(
+                "/ui/app/dev/status?did=${encode(deviceId)}&more=false",
+                platform,
+                token
+            )
+            HuiLifeDiagnostics.lastDeviceStatus =
+                "code=${json.int("code")} msg=${json.string("msg")}"
+            requireSuccess(json, "设备状态读取失败")
+            val device = json.get("data")
+                ?.takeIf { it.isJsonObject }?.asJsonObject
+                ?.get("device")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: throw IOException("设备状态缺少 device")
+            val gene = device.get("gene")?.takeIf { it.isJsonObject }?.asJsonObject
+            HuiLifeDeviceStatus(
+                deviceStatus = device.int("status"),
+                geneStatus = gene?.int("status") ?: 0,
+                endTimeMillis = timeToMillis(gene?.long("time") ?: 0L)
+            )
+        }
+    }
+
+    /** 扫码得到的 qrId 通过 `/qr/use` 换成真实设备编号。 */
+    suspend fun resolveQrDevice(token: String, qrId: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val json = getJson(
+                    "/qr/use?id=${encode(qrId)}",
+                    HuiLifePlatform.APP,
+                    token
+                )
+                requireSuccess(json, "二维码解析失败")
+                val deviceId = json.get("data")
+                    ?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.get("dev")?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.string("id")
+                    .orEmpty()
+                if (deviceId.isBlank()) throw IOException("二维码里没有设备编号")
+                deviceId
+            }
+        }
+
+    /**
+     * 读取设备状态的诊断探针；保留给「复制诊断」使用，不参与启动判断。
+     */
+    suspend fun probeDeviceStatus(
+        token: String,
+        platform: HuiLifePlatform,
+        deviceId: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val candidates = listOf(
+                "/ui/app/dev/status?did=${encode(deviceId)}",
+                "/ui/app/dev/status?id=${encode(deviceId)}",
+                "/dev/rela/view-stat?did=${encode(deviceId)}"
+            )
+            val lines = candidates.map { path ->
+                runCatching { getJson(path, platform, token) }.fold(
+                    onSuccess = { json ->
+                        "$path -> code=${json.int("code")} msg=${json.string("msg")} " +
+                            "data=${json.get("data")}"
+                    },
+                    onFailure = { "$path -> ${it.message}" }
+                )
+            }
+            val text = lines.joinToString("\n")
+            HuiLifeDiagnostics.lastDeviceStatus = text
+            text
+        }
+    }
+
     suspend fun startDevice(
         appToken: String,
         deviceId: String
@@ -355,9 +432,12 @@ class HuiLifeClient(
 
     private fun JsonObject.long(key: String): Long {
         val value = get(key) ?: return 0L
-        if (value.isJsonNull) return 0L
+        if (value.isJsonNull || !value.isJsonPrimitive) return 0L
         return runCatching { value.asLong }.getOrDefault(0L)
     }
+
+    private fun timeToMillis(value: Long): Long =
+        if (value in 1L until 100_000_000_000L) value * 1000L else value
 
     private fun JsonObject.doubleOrNull(key: String): Double? {
         val value = get(key) ?: return null

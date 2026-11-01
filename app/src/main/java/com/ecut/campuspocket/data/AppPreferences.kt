@@ -53,6 +53,33 @@ class AppPreferences(context: Context) {
         get() = prefs.getString(KEY_HUILIFE_PHONE, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_HUILIFE_PHONE, value).apply()
 
+    /**
+     * 用户主动扫过二维码的 798 设备。
+     *
+     * 只有这份集合里的设备才显示「启动」；其余设备只读状态。
+     * 这是产品规则，不是服务端权限校验。
+     */
+    val huiLifeScannedDevices: Set<String>
+        get() = prefs.getStringSet(KEY_HUILIFE_SCANNED, emptySet()).orEmpty().toSet()
+
+    @Synchronized
+    fun markHuiLifeDeviceScanned(deviceId: String): Set<String> {
+        val current = huiLifeScannedDevices.toMutableSet()
+        if (current.add(deviceId)) {
+            prefs.edit().putStringSet(KEY_HUILIFE_SCANNED, current).apply()
+        }
+        return current
+    }
+
+    @Synchronized
+    fun removeHuiLifeScannedDevice(deviceId: String): Set<String> {
+        val current = huiLifeScannedDevices.toMutableSet()
+        if (current.remove(deviceId)) {
+            prefs.edit().putStringSet(KEY_HUILIFE_SCANNED, current).apply()
+        }
+        return current
+    }
+
     /** 上次完整拉取作业/考试的时间，避免每 15 分钟都请求全部课程。 */
     var chaoxingTasksFetchedAt: Long
         get() = prefs.getLong(KEY_CHAOXING_TASKS_AT, 0L)
@@ -96,6 +123,7 @@ class AppPreferences(context: Context) {
         private const val KEY_CHAOXING_TASKS_SEEDED = "chaoxing_tasks_seeded"
         private const val KEY_WEATHER_LOCATION = "weather_location"
         private const val KEY_HUILIFE_PHONE = "huilife_phone"
+        private const val KEY_HUILIFE_SCANNED = "huilife_scanned_devices"
         private const val KEY_NOTIFIED_PREFIX = "notified_"
     }
 }

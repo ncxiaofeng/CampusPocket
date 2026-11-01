@@ -17,12 +17,16 @@ object HuiLifeDiagnostics {
     @Volatile
     var lastBills: String = "未请求"
 
+    @Volatile
+    var lastDeviceStatus: String = "未请求"
+
     fun summary(extra: String = ""): String = buildString {
         append("HTTP=").append(lastHttp)
         append("; 响应=").append(lastResponse)
         append("; master=").append(lastMaster)
         append("; wallet=").append(lastWallet)
         append("; bills=").append(lastBills)
+        append("; status=").append(lastDeviceStatus)
         if (extra.isNotBlank()) append("; ").append(extra)
     }
 }

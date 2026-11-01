@@ -47,3 +47,22 @@ jobs:
               --title "冻小梨 ${VERSION}" \
               --generate-notes
           fi
+
+      # 只保留当前版本的 APK 附件；旧版本的 Release 说明保留，APK 删除。
+      - name: Prune old APK assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT="${GITHUB_REF_NAME}"
+          gh api --paginate "repos/${{ github.repository }}/releases" \
+            --jq '.[] | select(.tag_name != "'"$CURRENT"'") | .id' |
+          while read -r rid; do
+            [ -z "$rid" ] && continue
+            gh api "repos/${{ github.repository }}/releases/$rid/assets" \
+              --jq '.[] | select(.name | endswith(".apk")) | .id' |
+            while read -r aid; do
+              [ -z "$aid" ] && continue
+              echo "Deleting old APK asset $aid from release $rid"
+              gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$aid" || true
+            done
+          done
