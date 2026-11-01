@@ -1,5 +1,6 @@
 package com.ecut.campuspocket.data.remote.jw
 
+import android.util.Log
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.ProxySessionRequiredException
@@ -127,6 +128,9 @@ class JwAdapter(
     @Volatile
     private var lastFailedBootstrapAt = 0L
 
+    @Volatile
+    private var lastBootstrapDiagnostic: String? = null
+
     /** 最近一次成功的基地址；下次请求优先用它，避免在两种网络间来回切换。 */
     @Volatile
     private var preferredBaseUrl: String? = null
@@ -147,9 +151,23 @@ class JwAdapter(
         val manager = ssoManager ?: return false
         if (baseUrl != CampusEndpoints.JW_BASE_URL) return false
         val now = System.currentTimeMillis()
-        if (now - lastFailedBootstrapAt < BOOTSTRAP_RETRY_COOLDOWN_MS) return false
+        // 用户刚刚在 WebView 里重新登录过（CASTGC updatedAt 变新）时，
+        // 即使还在冷却期也要立刻再试一次，否则会出现“登录页已登录、同步仍说过期”。
+        val masterUpdatedAt = manager.masterSessionUpdatedAt()
+        if (now - lastFailedBootstrapAt < BOOTSTRAP_RETRY_COOLDOWN_MS &&
+            masterUpdatedAt <= lastFailedBootstrapAt
+        ) {
+            return false
+        }
         val ok = manager.ensureServiceSession(CampusEndpoints.JW_SSO_URL)
-        if (!ok) lastFailedBootstrapAt = now
+        lastBootstrapDiagnostic =
+            "masterUpdated=$masterUpdatedAt lastFailed=$lastFailedBootstrapAt ok=$ok"
+        Log.d("JwDiag", "bootstrapDirectSession $lastBootstrapDiagnostic")
+        if (ok) {
+            lastFailedBootstrapAt = 0L
+        } else {
+            lastFailedBootstrapAt = now
+        }
         return ok
     }
 
@@ -163,7 +181,7 @@ class JwAdapter(
         lastError: IOException?
     ): IOException = when {
         proxyAttempted -> ProxySessionRequiredException()
-        lastError != null && lastError !is SessionExpiredException -> lastError
+        lastError != null -> lastError
         else -> SessionExpiredException()
     }
 
@@ -411,6 +429,7 @@ class JwAdapter(
                     preferredBaseUrl = base.url
                     return first.body
                 }
+                Log.d("JwDiag", "GET session expired detail=${first.detail}")
                 if (base.isProxy) proxyAttempted = true
 
                 // 校内直连时可以用 CASTGC 自动续会话；代理模式不在这里处理。
@@ -420,8 +439,16 @@ class JwAdapter(
                         preferredBaseUrl = base.url
                         return second.body
                     }
+                    lastError = SessionExpiredException(
+                        second.detail ?: first.detail ?: "教务会话已失效"
+                    )
+                } else {
+                    lastError = SessionExpiredException(
+                        listOfNotNull(first.detail, lastBootstrapDiagnostic)
+                            .joinToString("；")
+                            .ifBlank { "教务会话已失效" }
+                    )
                 }
-                lastError = SessionExpiredException()
             } catch (error: IOException) {
                 lastError = error
                 if (base.isProxy) proxyAttempted = true
@@ -440,16 +467,23 @@ class JwAdapter(
             .build()
         return try {
             client.newCall(request).execute().use { response ->
+                Log.d(
+                    "JwDiag",
+                    "GET ${request.url} code=${response.code} redirect=${response.isRedirect}"
+                )
                 if (response.isRedirect) return RawResponse("", true)
                 if (!response.isSuccessful) {
                     throw IOException("教务系统返回 ${response.code}")
                 }
                 val responseBody = response.body?.string().orEmpty()
-                RawResponse(responseBody, looksLikeLogin(responseBody))
+                val login = looksLikeLogin(responseBody)
+                Log.d("JwDiag", "GET body loginLike=$login len=${responseBody.length}")
+                RawResponse(responseBody, login)
             }
-        } catch (_: SessionExpiredException) {
+        } catch (exception: SessionExpiredException) {
             // casHttpClient 的拦截器发现回跳 CAS 时会直接抛出，等价于会话过期。
-            RawResponse("", true)
+            Log.d("JwDiag", "GET interceptor session expired: ${exception.message}")
+            RawResponse("", true, exception.message)
         }
     }
 
@@ -479,6 +513,7 @@ class JwAdapter(
                     preferredBaseUrl = base.url
                     return first.body
                 }
+                Log.d("JwDiag", "POST session expired detail=${first.detail}")
                 if (base.isProxy) proxyAttempted = true
 
                 if (!base.isProxy && bootstrapDirectSession(base.url)) {
@@ -487,8 +522,16 @@ class JwAdapter(
                         preferredBaseUrl = base.url
                         return second.body
                     }
+                    lastError = SessionExpiredException(
+                        second.detail ?: first.detail ?: "教务会话已失效"
+                    )
+                } else {
+                    lastError = SessionExpiredException(
+                        listOfNotNull(first.detail, lastBootstrapDiagnostic)
+                            .joinToString("；")
+                            .ifBlank { "教务会话已失效" }
+                    )
                 }
-                lastError = SessionExpiredException("教务会话已失效")
             } catch (error: IOException) {
                 lastError = error
                 if (base.isProxy) proxyAttempted = true
@@ -515,6 +558,10 @@ class JwAdapter(
             .build()
         return try {
             client.newCall(request).execute().use { response ->
+                Log.d(
+                    "JwDiag",
+                    "POST ${request.url} code=${response.code} redirect=${response.isRedirect}"
+                )
                 if (response.isRedirect) return RawResponse("", true)
                 if (!response.isSuccessful) {
                     throw IOException("教务系统返回 ${response.code}")
@@ -527,12 +574,17 @@ class JwAdapter(
                 if (!jsonLike && looksLikeLogin(text)) return RawResponse(text, true)
                 RawResponse(text, false)
             }
-        } catch (_: SessionExpiredException) {
-            RawResponse("", true)
+        } catch (exception: SessionExpiredException) {
+            Log.d("JwDiag", "POST interceptor session expired: ${exception.message}")
+            RawResponse("", true, exception.message)
         }
     }
 
-    private data class RawResponse(val body: String, val sessionExpired: Boolean)
+    private data class RawResponse(
+        val body: String,
+        val sessionExpired: Boolean,
+        val detail: String? = null
+    )
 
     private fun parseObject(json: String): JsonObject {
         return try {

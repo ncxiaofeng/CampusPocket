@@ -132,7 +132,7 @@ fun LoginWebViewScreen(
         if (cookieByHost.isEmpty() || !looksLoggedIn) {
             statusIsError = true
             statusMessage = if (requiredPrimaryCookie != null) {
-                "尚未检测到教务系统会话。请先完成登录并进入课表页面，再点击“完成登录”。"
+                "尚未检测到${target.title}会话。请先完成登录并进入业务首页，再点击“完成登录”。"
             } else {
                 "未检测到登录凭证。请先在页面中完成登录，再点击“完成登录”。"
             }
@@ -145,7 +145,20 @@ fun LoginWebViewScreen(
                 repo.saveLoginCookies(
                     systemId = target.systemId,
                     primaryHost = primaryHost,
-                    cookieByHost = cookieByHost
+                    cookieByHost = cookieByHost,
+                    pathByHost = buildMap {
+                        put(
+                            primaryHost,
+                            when {
+                                target.systemId == CampusEndpoints.SYSTEM_CAS_MASTER ->
+                                    "/authserver"
+                                primaryHost == "172.20.130.13" -> "/jwglxt"
+                                primaryHost == "xgwx.ecut.edu.cn" -> "/app"
+                                else -> "/"
+                            }
+                        )
+                        putIfAbsent(CampusEndpoints.CAS_HOST, "/authserver")
+                    }
                 )
             }
             if (result.isSuccess) {
@@ -272,12 +285,13 @@ fun LoginWebViewScreen(
                 Spacer(Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "密码不在本地保存",
+                        text = "密码默认不在本地保存",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "登录在官方网页完成，App 仅保存加密后的会话 Cookie。",
+                        text = "登录在官方网页完成，App 默认只保存加密后的会话 Cookie；" +
+                            "只有你在「自动登录」里主动开启，才会用 Keystore 加密保存账号密码。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -331,7 +345,8 @@ fun LoginWebViewScreen(
                         allowContentAccess = false
                         setSupportMultipleWindows(false)
                         cacheMode = WebSettings.LOAD_DEFAULT
-                        userAgentString = CampusEndpoints.DESKTOP_USER_AGENT
+                        userAgentString =
+                            target.userAgent ?: CampusEndpoints.DESKTOP_USER_AGENT
                     }
                     val cookieManager = CookieManager.getInstance()
                     cookieManager.setAcceptCookie(true)
@@ -352,6 +367,12 @@ fun LoginWebViewScreen(
                                 statusIsError = false
                                 statusMessage = "认证已完成，正在保存会话…"
                                 view?.postDelayed({ completeLogin() }, 800)
+                            }
+                            // CAS 登录页默认勾选「一周内免登录」，让 CASTGC 尽量长期有效。
+                            if (target.rememberLogin &&
+                                url.orEmpty().contains("/authserver/login")
+                            ) {
+                                view?.evaluateJavascript(REMEMBER_ME_SCRIPT, null)
                             }
                             // 统一认证：已经离开 CAS 登录页且 CASTGC 出现，自动保存，
                             // 不必再让用户点“完成登录”。停在 CAS 页时不动，避免把失效凭据存回去。
@@ -425,7 +446,14 @@ fun LoginWebViewScreen(
                                 val rows = runCatching {
                                     repo.loadCookiesForHost(host)
                                 }.getOrDefault(emptyList())
-                                val scheme = if (host.contains("authserver")) "https" else "http"
+                                val scheme = when {
+                                    host in target.httpsHosts -> "https"
+                                    host.contains("authserver") ||
+                                        host.contains("atrust") ||
+                                        host.contains("libspace") -> "https"
+                                    target.startUrl.startsWith("https://") -> "https"
+                                    else -> "http"
+                                }
                                 rows.forEach { row ->
                                     val path = row.path.ifBlank { "/" }
                                     manager.setCookie(
@@ -464,3 +492,30 @@ fun LoginWebViewScreen(
         }
     }
 }
+
+/**
+ * Apereo CAS 的「一周内免登录」复选框。用户仍需自己输入账号密码，
+ * App 只替他把这个官方选项勾上，以延长 CASTGC 的有效期。
+ */
+private const val REMEMBER_ME_SCRIPT = """
+(function(){
+  function tick(){
+    try {
+      var box = document.getElementById('rememberMe');
+      if (!box) return;
+      if (window.jQuery) {
+        var jq = window.jQuery('#rememberMe');
+        if (jq.length && typeof jq.iCheck === 'function') { jq.iCheck('check'); }
+      }
+      if (!box.checked) {
+        box.checked = true;
+        box.dispatchEvent(new Event('change', {bubbles: true}));
+        box.dispatchEvent(new Event('ifChecked', {bubbles: true}));
+      }
+    } catch (e) {}
+  }
+  tick();
+  setTimeout(tick, 500);
+  setTimeout(tick, 1500);
+})()
+"""

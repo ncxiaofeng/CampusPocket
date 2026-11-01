@@ -1,6 +1,7 @@
 package com.ecut.campuspocket.ui.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -33,7 +34,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,11 +73,15 @@ fun CampusWebPageScreen(
     saveProxySession: Boolean = false,
     saveSessionHost: String? = null,
     saveSessionSystemId: String = "ecut_session",
-    userAgentSwitch: Boolean = false
+    /** 只有当前页面路径以该前缀开头时才保存，避免把 /sso 的中间会话当成教务会话。 */
+    saveSessionPathPrefix: String? = null,
+    /** Cookie 在库里保存的 path，教务为 /jwglxt。 */
+    saveSessionPath: String = "/",
+    userAgentSwitch: Boolean = false,
+    rememberCasLogin: Boolean = false
 ) {
     val context = LocalContext.current
     val repo = AppContainer.authRepository
-    val scope = rememberCoroutineScope()
     val host = remember(url) { Uri.parse(url).host.orEmpty() }
     val cookieKey = remember(url) { url }
     var cookiesReady by remember(cookieKey) { mutableStateOf(false) }
@@ -266,30 +270,53 @@ fun CampusWebPageScreen(
                                 val ticket = CasSsoManager.casTicketValue(casRaw)
                                 if (ticket != null && ticket != lastCasTicket) {
                                     lastCasTicket = ticket
-                                    scope.launch {
+                                    AppContainer.appScope.launch {
                                         runCatching { repo.saveCasMasterCookies(casRaw) }
                                     }
                                 }
                                 if (saveSessionHost != null) {
                                     val currentUrl = url.orEmpty()
-                                    val currentHost = Uri.parse(currentUrl).host.orEmpty()
-                                    if (currentHost == saveSessionHost) {
-                                        val raw = CookieManager.getInstance()
-                                            .getCookie(currentUrl)
-                                        if (!raw.isNullOrBlank()) {
-                                            scope.launch {
+                                    val currentUri = Uri.parse(currentUrl)
+                                    val currentHost = currentUri.host.orEmpty()
+                                    val currentPath = currentUri.path.orEmpty()
+                                    val pathMatches = saveSessionPathPrefix == null ||
+                                        currentPath.startsWith(saveSessionPathPrefix)
+                                    Log.d(
+                                        "JwDiag",
+                                        "pageFinished host=$currentHost path=$currentPath " +
+                                            "saveHost=$saveSessionHost prefix=$saveSessionPathPrefix " +
+                                            "match=$pathMatches"
+                                    )
+                                    if (currentHost == saveSessionHost && pathMatches) {
+                                        val manager = CookieManager.getInstance()
+                                        val raw = scopedCookieHeader(
+                                            manager = manager,
+                                            url = currentUrl,
+                                            host = currentHost,
+                                            pathPrefix = saveSessionPathPrefix
+                                        )
+                                        if (raw.isNotBlank()) {
+                                            AppContainer.appScope.launch {
                                                 runCatching {
                                                     repo.saveLoginCookies(
                                                         systemId = saveSessionSystemId,
                                                         primaryHost = saveSessionHost,
                                                         cookieByHost = mapOf(
                                                             saveSessionHost to raw
+                                                        ),
+                                                        pathByHost = mapOf(
+                                                            saveSessionHost to saveSessionPath
                                                         )
                                                     )
                                                 }
                                             }
                                         }
                                     }
+                                }
+                                if (rememberCasLogin &&
+                                    url.orEmpty().contains("/authserver/login")
+                                ) {
+                                    view?.evaluateJavascript(REMEMBER_ME_SCRIPT, null)
                                 }
                                 if (saveProxySession) {
                                     val currentUrl = url.orEmpty()
@@ -298,10 +325,15 @@ fun CampusWebPageScreen(
                                     // 门户主页（atrust1.ecut.edu.cn）的 Cookie 存下来会误判“代理已就绪”，
                                     // 之后原生同步会一直拿不到 /jwglxt 会话。
                                     if (currentHost == CampusEndpoints.JW_PROXY_HOST) {
-                                        val raw = CookieManager.getInstance()
-                                            .getCookie(currentUrl)
-                                        if (!raw.isNullOrBlank()) {
-                                            scope.launch {
+                                        val manager = CookieManager.getInstance()
+                                        val raw = scopedCookieHeader(
+                                            manager = manager,
+                                            url = currentUrl,
+                                            host = currentHost,
+                                            pathPrefix = saveSessionPathPrefix
+                                        )
+                                        if (raw.isNotBlank()) {
+                                            AppContainer.appScope.launch {
                                                 runCatching {
                                                     repo.saveLoginCookies(
                                                         systemId = CampusEndpoints.SYSTEM_JW_PROXY,
@@ -369,6 +401,64 @@ fun CampusWebPageScreen(
  * aTrust 门户在 App WebView 里 `100vh` 会算成 0（Chromium 内嵌视图的初始包含块高度为 0），
  * 导致整页高度塌陷。这里用 window.innerHeight 的像素值覆盖关键容器，并持续一段时间防路由重渲染。
  */
+/**
+ * CookieManager.getCookie 会把同一 host 下不同 path 的同名 Cookie 混在一起
+ * （教务同时有 /sso 与 /jwglxt 的 JSESSIONID）。这里用根路径和 /sso 路径的
+ * Cookie 做差集，只留下目标 path 专属的那一个，避免把 /sso 的会话写进 /jwglxt。
+ */
+private fun scopedCookieHeader(
+    manager: CookieManager,
+    url: String,
+    host: String,
+    pathPrefix: String?
+): String {
+    val all = manager.getCookie(url).orEmpty()
+    if (all.isBlank()) return all
+    val jsessionCount = Regex("""(?:^|;\s*)JSESSIONID=""", RegexOption.IGNORE_CASE)
+        .findAll(all).count()
+    if (jsessionCount <= 1) return all
+    val scheme = Uri.parse(url).scheme ?: "http"
+    val excludedPairs = buildSet {
+        addAll(parseCookiePairs(manager.getCookie("$scheme://$host/").orEmpty()))
+        if (pathPrefix == "/jwglxt") {
+            addAll(parseCookiePairs(manager.getCookie("$scheme://$host/sso/").orEmpty()))
+        }
+    }
+    return parseCookiePairs(all)
+        .filter { pair -> !pair.first.equals("JSESSIONID", true) || pair !in excludedPairs }
+        .joinToString("; ") { (name, value) -> "$name=$value" }
+}
+
+private fun parseCookiePairs(raw: String): List<Pair<String, String>> =
+    raw.split(";").mapNotNull { part ->
+        val index = part.indexOf('=')
+        if (index <= 0) return@mapNotNull null
+        part.substring(0, index).trim() to part.substring(index + 1).trim()
+    }
+
+private const val REMEMBER_ME_SCRIPT = """
+(function(){
+  function tick(){
+    try {
+      var box = document.getElementById('rememberMe');
+      if (!box) return;
+      if (window.jQuery) {
+        var jq = window.jQuery('#rememberMe');
+        if (jq.length && typeof jq.iCheck === 'function') { jq.iCheck('check'); }
+      }
+      if (!box.checked) {
+        box.checked = true;
+        box.dispatchEvent(new Event('change', {bubbles: true}));
+        box.dispatchEvent(new Event('ifChecked', {bubbles: true}));
+      }
+    } catch (e) {}
+  }
+  tick();
+  setTimeout(tick, 500);
+  setTimeout(tick, 1500);
+})()
+"""
+
 private const val PORTAL_HEIGHT_FIX_SCRIPT = """
 (function(){
   function fix(){

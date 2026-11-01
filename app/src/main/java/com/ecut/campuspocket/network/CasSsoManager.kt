@@ -1,5 +1,6 @@
 package com.ecut.campuspocket.network
 
+import android.util.Log
 import com.ecut.campuspocket.data.repository.AuthRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -35,6 +36,11 @@ class CasSsoManager(
         hasCasTicket(loadCasCookieHeader())
     }
 
+    /** 主凭据最近一次写入时间，用于判断用户是否刚刚重新登录过。 */
+    suspend fun masterSessionUpdatedAt(): Long = withContext(Dispatchers.IO) {
+        authRepository.getCredential(CampusEndpoints.SYSTEM_CAS_MASTER)?.updatedAt ?: 0L
+    }
+
     /**
      * 用 CAS 主凭据为某个 service 静默换票。
      *
@@ -61,7 +67,7 @@ class CasSsoManager(
                 client.newCall(request).execute().use { response ->
                     val finalUrl = response.request.url
                     val finalPath = finalUrl.encodedPath
-                    when {
+                    val result = when {
                         // 业务系统校验 ticket 失败时会直接返回 5xx（正方 jziotlogin 就是 500），
                         // 不能因为“已经离开 CAS 域”就当成换票成功。
                         !response.isSuccessful -> false
@@ -71,6 +77,12 @@ class CasSsoManager(
                         finalPath.contains("login_slogin") || finalPath.contains("/authserver/") -> false
                         else -> true
                     }
+                    Log.d(
+                        "JwDiag",
+                        "CAS service=${serviceUrl.take(80)} final=${finalUrl} " +
+                            "code=${response.code} result=$result"
+                    )
+                    result
                 }
             } catch (_: IOException) {
                 false

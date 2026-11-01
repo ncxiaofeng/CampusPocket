@@ -1,5 +1,6 @@
 package com.ecut.campuspocket.ui
 
+import android.content.Intent
 import android.net.Uri
 import android.webkit.CookieManager
 import android.widget.Toast
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Assignment
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CreditCard
 import androidx.compose.material.icons.outlined.DateRange
@@ -55,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -70,6 +73,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ecut.campuspocket.ui.components.AppCard
+import com.ecut.campuspocket.ui.components.AppUpdateDialog
 import com.ecut.campuspocket.ui.components.GlassBackdrop
 import com.ecut.campuspocket.ui.components.GlassOverlay
 import com.ecut.campuspocket.ui.components.IconBadge
@@ -96,12 +100,17 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ecut.campuspocket.AppContainer
+import com.ecut.campuspocket.BuildConfig
+import com.ecut.campuspocket.data.remote.update.AppUpdateInfo
+import com.ecut.campuspocket.data.remote.update.UpdateChecker
 import com.ecut.campuspocket.navigation.Routes
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CampusNetworkState
 import com.ecut.campuspocket.network.CampusNetworkStatus
 import com.ecut.campuspocket.ui.screens.AboutScreen
+import com.ecut.campuspocket.ui.screens.AutoLoginScreen
 import com.ecut.campuspocket.ui.screens.CampusCardScreen
+import com.ecut.campuspocket.ui.screens.ChaoxingScreen
 import com.ecut.campuspocket.ui.screens.CampusWebPageScreen
 import com.ecut.campuspocket.ui.screens.ClassroomsScreen
 import com.ecut.campuspocket.ui.screens.ElectricityScreen
@@ -117,7 +126,9 @@ import com.ecut.campuspocket.ui.screens.ScheduleScreen
 import com.ecut.campuspocket.ui.screens.SyncScreen
 import com.ecut.campuspocket.ui.screens.TodayScreen
 import com.ecut.campuspocket.ui.screens.UjingScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class TabItem(
     val route: String,
@@ -136,7 +147,10 @@ private val tabs = listOf(
 private val topLevelRoutes = tabs.map { it.route }.toSet()
 
 @Composable
-fun CampusPocketRoot() {
+fun CampusPocketRoot(
+    initialRoute: String? = null,
+    onRouteConsumed: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -156,12 +170,51 @@ fun CampusPocketRoot() {
     val networkState by CampusNetworkStatus.state.collectAsStateWithLifecycle()
     var autoJumpHandled by rememberSaveable { mutableStateOf(false) }
     var showQuickActions by rememberSaveable { mutableStateOf(false) }
+    var autoUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     val backdropState = rememberLiquidGlassBackdropState()
     val layoutDirection = LocalLayoutDirection.current
     val showBottomBar = currentRoute != null && currentRoute in topLevelRoutes
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         scope.launch { CampusNetworkStatus.refresh() }
+    }
+
+    // 每次冷启动检查一次更新；用户可在「关于」里关闭。
+    LaunchedEffect(Unit) {
+        if (!AppContainer.preferences.autoCheckUpdates) return@LaunchedEffect
+        val result = withContext(Dispatchers.IO) {
+            UpdateChecker(AppContainer.baseHttpClient).check(BuildConfig.VERSION_NAME)
+        }
+        result.getOrNull()?.let { autoUpdateInfo = it }
+    }
+
+    // 开启了「自动登录」时，启动后静默检查/恢复一次统一认证会话。
+    LaunchedEffect(Unit) {
+        if (AppContainer.preferences.autoLoginEnabled &&
+            AppContainer.credentialVault.hasCredentials
+        ) {
+            withContext(Dispatchers.IO) {
+                runCatching { AppContainer.sessionRecoveryManager.recoverCasSession() }
+            }
+        }
+    }
+
+    // 通知点进来时直接打开学习通。
+    LaunchedEffect(initialRoute) {
+        val route = initialRoute ?: return@LaunchedEffect
+        if (route.isNotBlank()) {
+            navController.navigate(route) { launchSingleTop = true }
+        }
+        onRouteConsumed()
+    }
+
+    fun openExternal(url: String) {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
     }
 
     LaunchedEffect(networkState, vpnCredential) {
@@ -289,6 +342,12 @@ fun CampusPocketRoot() {
                     onLogout = {
                         scope.launch {
                             runCatching { AppContainer.authRepository.clearAll() }
+                            runCatching { AppContainer.chaoxingRepository.logout() }
+                            runCatching {
+                                AppContainer.credentialVault.clear()
+                                AppContainer.preferences.autoLoginEnabled = false
+                                AppContainer.preferences.huiLifePhone = ""
+                            }
                             val cookieManager = CookieManager.getInstance()
                             cookieManager.removeAllCookies(null)
                             cookieManager.flush()
@@ -317,8 +376,11 @@ fun CampusPocketRoot() {
                         extraCookieHosts = listOf(CampusEndpoints.CAS_HOST),
                         saveSessionHost = java.net.URI(CampusEndpoints.JW_BASE_URL).host,
                         saveSessionSystemId = CampusEndpoints.SYSTEM_JW,
+                        saveSessionPathPrefix = "/jwglxt",
+                        saveSessionPath = "/jwglxt",
                         detectSessionLost = false,
-                        sourceName = "教务系统"
+                        sourceName = "教务系统",
+                        rememberCasLogin = true
                     )
                 } else {
                     // 校外：教务内网地址不可达，先完成统一认证（落到 ehall）。
@@ -354,9 +416,11 @@ fun CampusPocketRoot() {
                 )
             }
             composable(Routes.ELECTRICITY_LOGIN) {
-                // 电费不再单独登录：统一身份认证一次即可，电费会话由 CAS 静默换票。
+                // 直接打开宿舍缴费页：已有 CASTGC 时静默 SSO；
+                // 没有时在同一次 WebView 里完成 CAS 登录并保存 xgwx 会话，
+                // 不再依赖 OkHttp 对集群粘性 Cookie 的静默换票。
                 LoginWebViewScreen(
-                    target = CampusEndpoints.CAS_LOGIN,
+                    target = CampusEndpoints.ELECTRICITY_LOGIN,
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -529,7 +593,7 @@ fun CampusPocketRoot() {
                 PlaceholderScreen(
                     title = "隐私说明",
                     icon = Icons.Outlined.PrivacyTip,
-                    description = "所有凭据仅保存在本机加密数据库中，App 不上传任何个人数据，也不保存账号密码；天气接口只发送设备定位或校区坐标。",
+                    description = "所有凭据仅保存在本机加密数据库中，App 不上传任何个人数据。密码默认不保存；只有你主动开启「自动登录」时，才会用 Android Keystore 加密保存账号密码。天气接口只发送设备定位或校区坐标。",
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -537,6 +601,42 @@ fun CampusPocketRoot() {
                 AboutScreen(
                     onBack = { navController.popBackStack() },
                     onOpenPrivacy = { navController.navigate(Routes.PRIVACY) }
+                )
+            }
+            composable(Routes.AUTO_LOGIN) {
+                AutoLoginScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Routes.CHAOXING) {
+                ChaoxingScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenLogin = { navController.navigate(Routes.CHAOXING_LOGIN) },
+                    onOpenUrl = { url ->
+                        navController.navigate(Routes.CHAOXING_WEB + "?url=" + Uri.encode(url))
+                    }
+                )
+            }
+            composable(Routes.CHAOXING_LOGIN) {
+                LoginWebViewScreen(
+                    target = CampusEndpoints.CHAOXING_LOGIN,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Routes.CHAOXING_WEB + "?url={url}",
+                arguments = listOf(
+                    navArgument("url") { defaultValue = "" }
+                )
+            ) { entry ->
+                val url = entry.arguments?.getString("url").orEmpty()
+                CampusWebPageScreen(
+                    title = "学习通",
+                    url = url.ifBlank { CampusEndpoints.CHAOXING_LOGIN_URL },
+                    onBack = { navController.popBackStack() },
+                    helperText = "学习通官方页面（只读）；签到、交作业等操作请自行确认。",
+                    extraCookieHosts = CampusEndpoints.CHAOXING_HOSTS.toList(),
+                    desktopUserAgent = false,
+                    detectSessionLost = false,
+                    sourceName = "学习通"
                 )
             }
             }
@@ -550,6 +650,13 @@ fun CampusPocketRoot() {
                     showQuickActions = false
                     if (asTab) openTab(route) else navController.navigate(route)
                 }
+            )
+        }
+        autoUpdateInfo?.let { info ->
+            AppUpdateDialog(
+                info = info,
+                onDismiss = { autoUpdateInfo = null },
+                onOpenUrl = ::openExternal
             )
         }
     }
@@ -581,6 +688,7 @@ private fun QuickActionsSheet(
             asTab = true
         ),
         QuickActionItem("空闲教室", Routes.CLASSROOMS, Icons.Outlined.School, Color(0xFF3B7BBF)),
+        QuickActionItem("学习通", Routes.CHAOXING, Icons.Outlined.Assignment, Color(0xFF4A7BD0)),
         QuickActionItem("图书馆", Routes.LIBRARY, Icons.Outlined.LocalLibrary, Color(0xFF7C5CC4)),
         QuickActionItem(
             "U净洗衣",

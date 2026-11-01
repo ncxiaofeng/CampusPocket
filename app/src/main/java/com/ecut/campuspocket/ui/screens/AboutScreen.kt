@@ -14,19 +14,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,6 +47,7 @@ import com.ecut.campuspocket.data.AppLinks
 import com.ecut.campuspocket.data.remote.update.AppUpdateInfo
 import com.ecut.campuspocket.data.remote.update.UpdateChecker
 import com.ecut.campuspocket.ui.components.AppCard
+import com.ecut.campuspocket.ui.components.AppUpdateDialog
 import com.ecut.campuspocket.ui.components.IconBadge
 import com.ecut.campuspocket.ui.components.SectionHeader
 import com.ecut.campuspocket.ui.components.ThinDivider
@@ -75,6 +73,8 @@ fun AboutScreen(
     val scope = rememberCoroutineScope()
     var updateState by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
     var showReleaseDialog by remember { mutableStateOf(false) }
+    val preferences = com.ecut.campuspocket.AppContainer.preferences
+    var autoCheckUpdates by remember { mutableStateOf(preferences.autoCheckUpdates) }
 
     fun openUrl(url: String) {
         runCatching {
@@ -144,6 +144,11 @@ fun AboutScreen(
             item {
                 UpdateCard(
                     state = updateState,
+                    autoCheck = autoCheckUpdates,
+                    onToggleAutoCheck = {
+                        autoCheckUpdates = it
+                        preferences.autoCheckUpdates = it
+                    },
                     onCheck = ::checkUpdate,
                     onShowRelease = { showReleaseDialog = true }
                 )
@@ -157,7 +162,7 @@ fun AboutScreen(
 
     val available = updateState as? UpdateState.Available
     if (showReleaseDialog && available != null) {
-        ReleaseDialog(
+        AppUpdateDialog(
             info = available.info,
             onDismiss = { showReleaseDialog = false },
             onOpenUrl = ::openUrl
@@ -219,6 +224,8 @@ private fun HeroCard() {
 @Composable
 private fun UpdateCard(
     state: UpdateState,
+    autoCheck: Boolean,
+    onToggleAutoCheck: (Boolean) -> Unit,
     onCheck: () -> Unit,
     onShowRelease: () -> Unit
 ) {
@@ -249,6 +256,19 @@ private fun UpdateCard(
                         style = MaterialTheme.typography.labelLarge
                     )
                 }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("启动时自动检查更新", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "每次打开 App 检查一次，默认开启",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = autoCheck, onCheckedChange = onToggleAutoCheck)
             }
 
             when (state) {
@@ -381,7 +401,7 @@ private fun PrivacyCard(onOpenPrivacy: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("隐私说明", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = "凭据只存本机、不保存账号密码；天气接口仅发送设备定位或校区坐标",
+                    text = "凭据只存本机；密码默认不保存，可选 Keystore 加密自动登录；天气接口仅发送定位坐标",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -393,57 +413,4 @@ private fun PrivacyCard(onOpenPrivacy: () -> Unit) {
             )
         }
     }
-}
-
-@Composable
-private fun ReleaseDialog(
-    info: AppUpdateInfo,
-    onDismiss: () -> Unit,
-    onOpenUrl: (String) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("发现新版本 v${info.version}") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 380.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Text(
-                    text = info.releaseNotes.ifBlank { "本次更新没有附带说明。" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "蓝奏云提取码：${AppLinks.LANZOU_FOLDER_PWD}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onOpenUrl(info.apkDownloadUrl ?: info.releasePageUrl)
-                    onDismiss()
-                },
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(if (info.apkDownloadUrl != null) "GitHub 下载" else "打开发布页")
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(
-                    onClick = {
-                        onOpenUrl(AppLinks.LANZOU_FOLDER)
-                        onDismiss()
-                    }
-                ) { Text("蓝奏云下载") }
-                TextButton(onClick = onDismiss) { Text("稍后") }
-            }
-        }
-    )
 }

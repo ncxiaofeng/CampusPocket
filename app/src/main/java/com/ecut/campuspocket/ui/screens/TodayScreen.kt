@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,9 +61,11 @@ import com.ecut.campuspocket.data.ClassTimes
 import com.ecut.campuspocket.data.local.CourseEntity
 import com.ecut.campuspocket.data.remote.card.CampusCardBill
 import com.ecut.campuspocket.data.remote.card.CampusCardOverview
+import com.ecut.campuspocket.data.remote.weather.WeatherClient
 import com.ecut.campuspocket.data.remote.weather.WeatherDaily
 import com.ecut.campuspocket.data.remote.weather.WeatherHourly
 import com.ecut.campuspocket.data.remote.weather.WeatherSnapshot
+import com.ecut.campuspocket.data.remote.weather.WeatherLocation
 import com.ecut.campuspocket.data.remote.weather.alignHour
 import com.ecut.campuspocket.data.remote.weather.weatherDescription
 import com.ecut.campuspocket.network.CampusNetworkState
@@ -227,6 +230,8 @@ fun TodayScreen(
                 isLoading = weatherViewModel.isLoading,
                 message = weatherViewModel.message,
                 courses = todayCourses,
+                selectedLocation = weatherViewModel.locationOverride,
+                onSelectLocation = { weatherViewModel.selectLocation(it) },
                 onRefresh = { weatherViewModel.refresh() }
             )
         }
@@ -468,8 +473,11 @@ private fun WeatherCard(
     isLoading: Boolean,
     message: String?,
     courses: List<TodayCourse>,
+    selectedLocation: WeatherLocation?,
+    onSelectLocation: (WeatherLocation?) -> Unit,
     onRefresh: () -> Unit
 ) {
+    var showLocationDialog by remember { mutableStateOf(false) }
     val currentCode = snapshot?.now?.weatherCode
         ?: snapshot?.let { currentHour(it)?.weatherCode }
         ?: 2
@@ -493,6 +501,10 @@ private fun WeatherCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                TextButton(
+                    onClick = { showLocationDialog = true },
+                    contentPadding = PaddingValues(horizontal = 6.dp)
+                ) { Text("位置", style = MaterialTheme.typography.labelMedium) }
                 if (isLoading) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 } else {
@@ -534,11 +546,70 @@ private fun WeatherCard(
             }
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "天气数据来自 Open-Meteo 公开接口，仅发送设备定位或广兰校区坐标，可离线忽略。",
+                text = "天气来自 Open-Meteo 模型预报（非气象站实况），仅发送设备定位或所选校区坐标，可离线忽略。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
             )
         }
+    }
+
+    if (showLocationDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocationDialog = false },
+            title = { Text("天气位置") },
+            text = {
+                Column {
+                    LocationChoice(
+                        label = "当前位置（设备定位）",
+                        selected = selectedLocation == null
+                    ) {
+                        onSelectLocation(null)
+                        showLocationDialog = false
+                    }
+                    LocationChoice(
+                        label = "南昌 · 广兰校区",
+                        selected = selectedLocation == WeatherClient.GUANGLAN
+                    ) {
+                        onSelectLocation(WeatherClient.GUANGLAN)
+                        showLocationDialog = false
+                    }
+                    LocationChoice(
+                        label = "南昌 · 青岚校区",
+                        selected = selectedLocation == WeatherClient.QINGLAN
+                    ) {
+                        onSelectLocation(WeatherClient.QINGLAN)
+                        showLocationDialog = false
+                    }
+                    LocationChoice(
+                        label = "抚州校区",
+                        selected = selectedLocation == WeatherClient.FUZHOU
+                    ) {
+                        onSelectLocation(WeatherClient.FUZHOU)
+                        showLocationDialog = false
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLocationDialog = false }) { Text("关闭") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun LocationChoice(label: String, selected: Boolean, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text = if (selected) "✓  $label" else "     $label",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 
@@ -596,7 +667,7 @@ private fun WeatherContent(snapshot: WeatherSnapshot, courses: List<TodayCourse>
                 WeatherSummaryPill(
                     label = "今天",
                     value = "${it.minTemperature.roundToInt()}° ~ ${it.maxTemperature.roundToInt()}°",
-                    detail = "降水 ${it.precipitationProbabilityMax}%",
+                    detail = "${weatherDescription(it.weatherCode)} · 降水概率 ${it.precipitationProbabilityMax}%",
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -604,7 +675,7 @@ private fun WeatherContent(snapshot: WeatherSnapshot, courses: List<TodayCourse>
                 WeatherSummaryPill(
                     label = "明天",
                     value = "${it.minTemperature.roundToInt()}° ~ ${it.maxTemperature.roundToInt()}°",
-                    detail = "降水 ${it.precipitationProbabilityMax}%",
+                    detail = "${weatherDescription(it.weatherCode)} · 降水概率 ${it.precipitationProbabilityMax}%",
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -668,9 +739,9 @@ private fun WeatherContent(snapshot: WeatherSnapshot, courses: List<TodayCourse>
                         text = if (forecast != null) {
                             "${forecast.temperature.roundToInt()}° · ${weatherDescription(forecast.weatherCode)}" +
                                 if (forecast.precipitationProbability > 0) {
-                                    " · 降水 ${forecast.precipitationProbability}%"
+                                    " · 降水概率 ${forecast.precipitationProbability}%"
                                 } else {
-                                    " · 无降水"
+                                    " · 降水概率 0%"
                                 }
                         } else {
                             "暂无该时段逐小时数据"
@@ -764,7 +835,7 @@ private fun WeatherHourPill(item: WeatherHourly, modifier: Modifier = Modifier) 
             text = if (item.precipitationProbability > 0) {
                 "${item.precipitationProbability}%"
             } else {
-                "无降水"
+                "降水概率 0%"
             },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant

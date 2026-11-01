@@ -1,20 +1,26 @@
 package com.ecut.campuspocket
 
 import android.content.Context
+import com.ecut.campuspocket.data.AppPreferences
+import com.ecut.campuspocket.data.CredentialVault
 import com.ecut.campuspocket.data.local.CampusDatabase
 import com.ecut.campuspocket.data.location.DeviceLocationProvider
 import com.ecut.campuspocket.data.remote.ElectricitySource
+import com.ecut.campuspocket.data.remote.chaoxing.ChaoxingClient
 import com.ecut.campuspocket.data.remote.electricity.XgwxElectricityClient
 import com.ecut.campuspocket.data.remote.card.CampusCardClient
+import com.ecut.campuspocket.data.remote.huilife.HuiLifeClient
 import com.ecut.campuspocket.data.remote.jw.JwAdapter
 import com.ecut.campuspocket.data.remote.jw.JwBaseUrl
 import com.ecut.campuspocket.data.remote.library.LibrarySeatClient
 import com.ecut.campuspocket.data.remote.ujing.UjingClient
 import com.ecut.campuspocket.data.remote.weather.WeatherClient
 import com.ecut.campuspocket.data.repository.AuthRepository
+import com.ecut.campuspocket.data.repository.ChaoxingRepository
 import com.ecut.campuspocket.data.repository.ElectricityRepository
 import com.ecut.campuspocket.data.repository.ExamRepository
 import com.ecut.campuspocket.data.repository.GradeRepository
+import com.ecut.campuspocket.data.repository.HuiLifeRepository
 import com.ecut.campuspocket.data.repository.JwSyncManager
 import com.ecut.campuspocket.data.repository.ScheduleRepository
 import com.ecut.campuspocket.data.repository.UjingRepository
@@ -23,9 +29,14 @@ import com.ecut.campuspocket.network.CampusCookieJar
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CampusNetworkState
 import com.ecut.campuspocket.network.CampusNetworkStatus
+import com.ecut.campuspocket.network.CasAutoLogin
 import com.ecut.campuspocket.network.CasSsoManager
 import com.ecut.campuspocket.network.ProxySessionRequiredException
 import com.ecut.campuspocket.network.SessionExpiredInterceptor
+import com.ecut.campuspocket.network.SessionRecoveryManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -43,8 +54,22 @@ object AppContainer {
         }
     }
 
+    val applicationContext: Context
+        get() = requireContext()
+
+    /** 进程级协程域：WebView 页面关闭后仍能完成 Cookie 落库。 */
+    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private fun requireContext(): Context =
         appContext ?: error("AppContainer 尚未初始化")
+
+    val preferences: AppPreferences by lazy {
+        AppPreferences(requireContext())
+    }
+
+    val credentialVault: CredentialVault by lazy {
+        CredentialVault(requireContext())
+    }
 
     val database: CampusDatabase by lazy {
         CampusDatabase.create(requireContext())
@@ -120,6 +145,19 @@ object AppContainer {
         CasSsoManager(authRepository, baseHttpClient)
     }
 
+    val casAutoLogin: CasAutoLogin by lazy {
+        CasAutoLogin(baseHttpClient, authRepository)
+    }
+
+    val sessionRecoveryManager: SessionRecoveryManager by lazy {
+        SessionRecoveryManager(
+            ssoManager = casSsoManager,
+            vault = credentialVault,
+            preferences = preferences,
+            autoLoginFactory = { casAutoLogin }
+        )
+    }
+
     val jwAdapter: JwAdapter by lazy {
         JwAdapter(casHttpClient, ssoManager = casSsoManager) {
             val state = CampusNetworkStatus.state.value
@@ -166,6 +204,22 @@ object AppContainer {
 
     val ujingRepository: UjingRepository by lazy {
         UjingRepository(database.authDao(), ujingClient)
+    }
+
+    val chaoxingClient: ChaoxingClient by lazy {
+        ChaoxingClient(baseHttpClient, authRepository, preferences)
+    }
+
+    val chaoxingRepository: ChaoxingRepository by lazy {
+        ChaoxingRepository(chaoxingClient, authRepository, preferences)
+    }
+
+    val huiLifeClient: HuiLifeClient by lazy {
+        HuiLifeClient(baseHttpClient)
+    }
+
+    val huiLifeRepository: HuiLifeRepository by lazy {
+        HuiLifeRepository(huiLifeClient, authRepository, preferences)
     }
 
     val jwSyncManager: JwSyncManager by lazy {

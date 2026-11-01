@@ -24,7 +24,13 @@ data class LoginTarget(
     /** 打开 WebView 前先把加密库里该目标域的 Cookie 注入，已登录时可直接 SSO。 */
     val preloadStoredCookies: Boolean = false,
     /** 登录页下方的补充提示。 */
-    val helperText: String? = null
+    val helperText: String? = null,
+    /** 指定 WebView 的 User-Agent；null 表示教务桌面 UA。 */
+    val userAgent: String? = null,
+    /** 这些域名注入 Cookie 时使用 https（其余按主页面协议推断）。 */
+    val httpsHosts: Set<String> = emptySet(),
+    /** 在 CAS 登录页自动勾选「一周内免登录」。 */
+    val rememberLogin: Boolean = false
 )
 
 object CampusEndpoints {
@@ -45,6 +51,12 @@ object CampusEndpoints {
     const val SYSTEM_CARD = "ecut_card"
     /** U净洗衣会话（JWT，存在 auth_credentials.cookie 字段里，按不透明密钥处理）。 */
     const val SYSTEM_UJING = "ecut_ujing"
+    /** 超星学习通会话（Cookie）。 */
+    const val SYSTEM_CHAOXING = "ecut_chaoxing"
+    /** 慧生活798 查询端 Token（ApplicationType=1,5）。 */
+    const val SYSTEM_HUILIFE_ACCOUNT = "ecut_huilife_account"
+    /** 慧生活798 设备控制端 Token（ApplicationType=1,1）。 */
+    const val SYSTEM_HUILIFE_APP = "ecut_huilife_app"
 
     /** 教务系统按桌面浏览器处理，WebView 与 OkHttp 使用同一 UA。 */
     const val DESKTOP_USER_AGENT =
@@ -131,6 +143,8 @@ object CampusEndpoints {
         // 保留 WebView Cookie：CAS 登录页与后续 service 跳转在同一个 WebView 里完成。
         clearWebViewCookiesAfterSave = false,
         preloadStoredCookies = true,
+        httpsHosts = setOf(CAS_HOST, "ehall.ecut.edu.cn"),
+        rememberLogin = true,
         helperText = "一次登录后，课表、成绩、考试、教室、电费、校园卡和办事大厅共用同一个统一认证会话。"
     )
 
@@ -143,6 +157,8 @@ object CampusEndpoints {
         requiredPrimaryCookie = "jsessionid",
         // 已有 CASTGC 时直接静默 SSO，不再让用户重复输入密码。
         preloadStoredCookies = true,
+        httpsHosts = setOf(CAS_HOST),
+        rememberLogin = true,
         helperText = "已登录统一身份认证时，这里会自动完成教务授权，无需再次输入密码。"
     )
 
@@ -165,6 +181,52 @@ object CampusEndpoints {
     const val UJING_H5_URL =
         "https://wx.zhinengxiyifang.cn/static/washer-h5/ujing/latest/index.html"
 
+    /** 超星学习通：登录落到 i.chaoxing.com，接口分布在多个子域。 */
+    const val CHAOXING_HOST = "i.chaoxing.com"
+    const val CHAOXING_LOGIN_URL = "https://i.chaoxing.com/base"
+    const val CHAOXING_MOOC_API = "https://mooc1-api.chaoxing.com"
+    const val CHAOXING_MOOC_WEB = "https://mooc1.chaoxing.com"
+    const val CHAOXING_MOBILE_LEARN = "https://mobilelearn.chaoxing.com"
+    const val CHAOXING_PASSPORT = "https://passport2.chaoxing.com"
+    const val CHAOXING_NOTICE = "https://notice.chaoxing.com"
+
+    val CHAOXING_HOSTS = setOf(
+        CHAOXING_HOST,
+        "passport2.chaoxing.com",
+        "passport2-api.chaoxing.com",
+        "mooc1.chaoxing.com",
+        "mooc1-api.chaoxing.com",
+        "mobilelearn.chaoxing.com",
+        "notice.chaoxing.com"
+    )
+
+    val CHAOXING_LOGIN = LoginTarget(
+        systemId = SYSTEM_CHAOXING,
+        title = "学习通登录",
+        startUrl = CHAOXING_LOGIN_URL,
+        primaryHost = CHAOXING_HOST,
+        extraCookieUrls = listOf(
+            "https://i.chaoxing.com/base",
+            "$CHAOXING_PASSPORT/",
+            "https://passport2-api.chaoxing.com/",
+            "$CHAOXING_MOOC_API/",
+            "$CHAOXING_MOBILE_LEARN/",
+            "$CHAOXING_MOOC_WEB/",
+            "$CHAOXING_NOTICE/"
+        ),
+        requiredAnyCookieNames = setOf("_uid", "_d", "uid"),
+        primaryPathPrefix = null,
+        autoCompleteHosts = setOf(CHAOXING_HOST),
+        preloadStoredCookies = true,
+        userAgent = MOBILE_BROWSER_USER_AGENT,
+        httpsHosts = CHAOXING_HOSTS,
+        helperText = "登录后只读取作业、考试和签到活动，不会代签、代交。"
+    )
+
+    /** 慧生活798：H5 只是说明页，登录与设备接口走 i.ilife798.com。 */
+    const val HUILIFE_BASE_URL = "https://i.ilife798.com/api/v1"
+    const val HUILIFE_CID = "drinkwaterapp123456789"
+
     /** 图书馆空间预约（libspace），空位接口无需登录，预约在官方 H5 完成。 */
     const val LIBRARY_BASE_URL = "https://libspace.ecut.edu.cn"
     const val LIBRARY_H5_URL = "$LIBRARY_BASE_URL/h5/index.html#/seat"
@@ -185,9 +247,13 @@ object CampusEndpoints {
         primaryHost = "xgwx.ecut.edu.cn",
         extraCookieUrls = listOf(AUTH_SERVER_LOGIN_URL),
         requiredPrimaryCookie = "jsessionid",
-        primaryPathPrefix = "/app",
-        // 已有 CASTGC 时由 CAS 自动换票，直接落到宿舍缴费页。
+        // 只有真正落到缴费首页才算成功，避免把 xgwx 自己的登录页当成已登录。
+        primaryPathPrefix = "/app/wechat/index",
+        // 已有 CASTGC 时由 CAS 自动换票，直接落到宿舍缴费页；落到首页后自动保存返回。
+        autoCompleteHosts = setOf("xgwx.ecut.edu.cn"),
         preloadStoredCookies = true,
+        httpsHosts = setOf("xgwx.ecut.edu.cn", CAS_HOST),
+        rememberLogin = true,
         helperText = "已登录统一身份认证时，这里会自动完成宿舍缴费授权，无需再次输入密码。"
     )
 
@@ -203,6 +269,11 @@ object CampusEndpoints {
         // 到 atrust1 就说明 CAS 已回调，直接保存凭证并返回，不再渲染门户。
         autoCompleteHosts = setOf("atrust1.ecut.edu.cn"),
         preloadStoredCookies = true,
+        httpsHosts = setOf(
+            "authserver-ecut-edu-cn-s.atrust.ecut.edu.cn",
+            "atrust1.ecut.edu.cn"
+        ),
+        rememberLogin = true,
         helperText = "网页登录只完成零信任认证；要访问课表/成绩，请同时连接校园 Wi-Fi，或使用 aTrust 客户端建立内网隧道。"
     )
 }

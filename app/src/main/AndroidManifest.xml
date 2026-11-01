@@ -7,6 +7,8 @@
     <!-- 仅用于天气：读取一次设备位置，把坐标发给 Open-Meteo；不后台定位、不上传学号等个人信息 -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 学习通签到/作业/考试提醒（Android 13+ 运行时申请） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- WorkManager 仅在普通后台任务中使用，不需要前台服务权限 -->
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE"

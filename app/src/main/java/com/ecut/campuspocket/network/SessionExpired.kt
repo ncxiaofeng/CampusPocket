@@ -8,6 +8,11 @@ class SessionExpiredException(
     message: String = "登录状态已过期，请重新登录"
 ) : IOException(message)
 
+/** 学习通 Cookie 失效，界面应引导重新登录学习通。 */
+class ChaoxingSessionExpiredException(
+    message: String = "学习通登录已过期，请重新登录"
+) : IOException(message)
+
 /**
  * 校外且还没有零信任 WebVPN 代理会话时抛出。
  * 需要用户先在门户里打开一次“新教务管理系统”，让代理域拿到会话 Cookie。
@@ -41,7 +46,9 @@ class SessionExpiredInterceptor(
             val location = response.header("Location").orEmpty()
             if (loginMarkers.any { marker -> location.contains(marker, ignoreCase = true) }) {
                 response.close()
-                throw SessionExpiredException()
+                throw SessionExpiredException(
+                    "会话被重定向到登录页：${location.take(160)}"
+                )
             }
         }
         return response

@@ -248,6 +248,18 @@ class WeatherClient(
             latitude = 28.718795,
             longitude = 115.825926
         )
+
+        val QINGLAN = WeatherLocation(
+            name = "南昌 · 青岚校区",
+            latitude = 28.7202,
+            longitude = 115.8203
+        )
+
+        val FUZHOU = WeatherLocation(
+            name = "抚州校区",
+            latitude = 27.94705,
+            longitude = 116.41202
+        )
     }
 }
 

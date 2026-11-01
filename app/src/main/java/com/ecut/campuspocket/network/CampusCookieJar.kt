@@ -1,5 +1,6 @@
 package com.ecut.campuspocket.network
 
+import android.util.Log
 import com.ecut.campuspocket.data.local.AuthDao
 import com.ecut.campuspocket.data.local.CookieDao
 import com.ecut.campuspocket.data.local.CookieEntity
@@ -56,6 +57,13 @@ class CampusCookieJar(
             }
         }
 
+        if (result.isNotEmpty()) {
+            Log.d(
+                "JwDiag",
+                "cookies host=$host path=$requestPath -> " +
+                    result.values.joinToString(",") { "${it.name}@${it.path}" }
+            )
+        }
         return result.values.toList()
     }
 

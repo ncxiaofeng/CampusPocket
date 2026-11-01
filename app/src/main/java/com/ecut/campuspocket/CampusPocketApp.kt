@@ -2,6 +2,8 @@ package com.ecut.campuspocket
 
 import android.app.Application
 import android.webkit.WebView
+import com.ecut.campuspocket.data.notifications.ReminderNotifier
+import com.ecut.campuspocket.work.ChaoxingReminderWorker
 
 /**
  * 进程级入口。
@@ -12,6 +14,8 @@ class CampusPocketApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AppContainer.init(this)
+        ReminderNotifier.ensureChannels(this)
+        ChaoxingReminderWorker.ensureScheduled(this)
         if (BuildConfig.DEBUG) {
             // 调试包允许通过 chrome://inspect / adb forward 观察内嵌网页。
             WebView.setWebContentsDebuggingEnabled(true)

@@ -97,6 +97,13 @@ fun MoreScreen(
                 onNavigate(if (vpnLoggedIn) Routes.VPN_PORTAL else Routes.VPN_LOGIN)
             },
             MoreItem(
+                badge = "登",
+                badgeColor = WarningAmber,
+                title = "自动登录",
+                subtitle = "可选：本机加密保存账号密码，会话失效时自动重登",
+                trailing = "设置"
+            ) { onNavigate(Routes.AUTO_LOGIN) },
+            MoreItem(
                 badge = "隧",
                 badgeColor = CourseTeal,
                 title = "aTrust 隧道",
@@ -114,6 +121,7 @@ fun MoreScreen(
             MoreItem("同", CourseBlue, "数据同步", "课表、成绩、考试、电费", "立即同步") { onNavigate(Routes.SYNC) }
         ),
         "学习空间" to listOf(
+            MoreItem("习", CourseBlue, "学习通", "作业、考试与签到提醒", null) { onNavigate(Routes.CHAOXING) },
             MoreItem("绩", CourseLavender, "成绩查询", "学期成绩与绩点", null) { onNavigate(Routes.GRADES) },
             MoreItem("考", CourseRose, "考试安排", "考场与考试时间", null) { onNavigate(Routes.EXAMS) },
             MoreItem("教", CourseTeal, "空闲教室", "按教学楼查询空教室", null) { onNavigate(Routes.CLASSROOMS) },
@@ -125,7 +133,7 @@ fun MoreScreen(
             MoreItem("电", WarningAmber, "电费查询", "照明 / 空调分项用电", null) { onNavigate(Routes.ELECTRICITY) },
             MoreItem("卡", TealPrimary, "校园卡", "余额与消费流水", null) { onNavigate(Routes.CAMPUS_CARD) },
             MoreItem("洗", CourseBlue, "U净洗衣", "查询洗衣机空闲状态", null) { onNavigate(Routes.LAUNDRY) },
-            MoreItem("水", CourseTeal, "慧生活798", "饮水机 / 吹风机状态", null) { onNavigate(Routes.WATER) },
+            MoreItem("水", CourseTeal, "慧生活798", "余额 / 设备 / 一键启动", null) { onNavigate(Routes.WATER) },
             MoreItem("跑", CourseRose, "阳光跑记录", "闪动校园跑步数据（只读）", null) { onNavigate(Routes.RUN) }
         ),
         "其他" to listOf(
@@ -237,12 +245,12 @@ fun MoreScreen(
                     Spacer(Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "密码不落在本机",
+                            text = "密码默认不保存",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(Modifier.height(3.dp))
                         Text(
-                            text = "登录在官方网页中完成，App 仅保存加密后的会话 Cookie。退出登录会同时清空本地数据库。",
+                            text = "登录在官方网页中完成，App 默认仅保存加密后的会话 Cookie。只有你在「自动登录」里主动开启，才会用 Android Keystore 加密保存账号密码。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

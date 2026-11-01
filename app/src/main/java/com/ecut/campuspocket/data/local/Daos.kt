@@ -39,6 +39,13 @@ interface CookieDao {
     @Query("DELETE FROM cookies WHERE domain = :domain")
     suspend fun deleteForDomain(domain: String)
 
+    @Query("DELETE FROM cookies WHERE domain = :domain AND path = :path")
+    suspend fun deleteForPath(domain: String, path: String)
+
+    /** 清掉同一 host 下同名 Cookie 的所有旧 path 副本，避免 /sso 与 /jwglxt 互相覆盖。 */
+    @Query("DELETE FROM cookies WHERE domain = :domain AND name IN (:names)")
+    suspend fun deleteForHostAndNames(domain: String, names: List<String>)
+
     @Query("DELETE FROM cookies")
     suspend fun clear()
 }

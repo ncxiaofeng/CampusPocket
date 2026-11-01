@@ -21,6 +21,7 @@ val keystoreProperties = Properties().apply {
  * 在 local.properties（已被 gitignore）里配置：
  *   ujing.hmac.key=...
  *   electricity.operator.pwd=...
+ *   huilife.app.sign.salt=...
  * 未配置时对应功能会给出明确错误，不影响其它模块。
  */
 val localProperties = Properties().apply {
@@ -32,6 +33,8 @@ val localProperties = Properties().apply {
 val ujingHmacKey = localProperties.getProperty("ujing.hmac.key").orEmpty()
 val electricityOperatorPwd =
     localProperties.getProperty("electricity.operator.pwd").orEmpty()
+val huilifeAppSignSalt =
+    localProperties.getProperty("huilife.app.sign.salt").orEmpty()
 
 fun buildConfigString(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
@@ -44,8 +47,8 @@ android {
         applicationId = "com.ecut.campuspocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.5.4"
+        versionCode = 13
+        versionName = "0.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -55,6 +58,11 @@ android {
             "String",
             "ELECTRICITY_OPERATOR_PWD",
             buildConfigString(electricityOperatorPwd)
+        )
+        buildConfigField(
+            "String",
+            "HUILIFE_APP_SIGN_SALT",
+            buildConfigString(huilifeAppSignSalt)
         )
     }
 

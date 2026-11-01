@@ -24,22 +24,31 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.ecut.campuspocket.AppContainer
+import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.CampusNetworkStatus
 import com.ecut.campuspocket.network.ProxySessionRequiredException
 import com.ecut.campuspocket.network.SessionExpiredException
 import com.ecut.campuspocket.ui.components.AppCard
 import com.ecut.campuspocket.ui.components.IconBadge
+import com.ecut.campuspocket.ui.SessionState
 import com.ecut.campuspocket.ui.components.StatusDot
 import com.ecut.campuspocket.ui.theme.CourseBlue
 import com.ecut.campuspocket.ui.theme.CourseRose
 import com.ecut.campuspocket.ui.theme.CourseTeal
 import com.ecut.campuspocket.ui.theme.ErrorRed
 import com.ecut.campuspocket.ui.theme.TealPrimary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -49,24 +58,54 @@ fun SyncScreen(
     onOpenPortal: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
     val syncManager = remember { AppContainer.jwSyncManager }
     var busy by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
-    var needsLogin by remember { mutableStateOf(false) }
+    var needsLogin by rememberSaveable { mutableStateOf(false) }
     var needsPortal by remember { mutableStateOf(false) }
+    var diagnostic by remember { mutableStateOf<String?>(null) }
+    var awaitingLogin by rememberSaveable { mutableStateOf(false) }
+    var lastSyncLabel by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun runSync(label: String, task: suspend () -> Result<Int>) {
         if (busy != null) return
+        lastSyncLabel = label
         scope.launch {
             busy = label
             message = null
             needsLogin = false
             needsPortal = false
             task().fold(
-                onSuccess = { count -> message = "${label}已同步，共 $count 条" },
+                onSuccess = { count ->
+                    message = "${label}已同步，共 $count 条"
+                    SessionState.clear()
+                },
                 onFailure = { error ->
                     needsLogin = error is SessionExpiredException
                     needsPortal = error is ProxySessionRequiredException
+                    if (needsLogin) SessionState.reportExpired()
+                    if (needsLogin) {
+                        scope.launch {
+                            val jwHost = java.net.URI(CampusEndpoints.JW_BASE_URL).host
+                            val jwCookies = runCatching {
+                                AppContainer.authRepository.loadCookiesForHost(jwHost)
+                            }.getOrDefault(emptyList())
+                            val cas = runCatching {
+                                AppContainer.authRepository.getCredential(
+                                    CampusEndpoints.SYSTEM_CAS_MASTER
+                                )
+                            }.getOrNull()
+                            diagnostic = buildString {
+                                append("error=").append(error.message.orEmpty())
+                                append("; network=")
+                                append(CampusNetworkStatus.state.value::class.simpleName)
+                                append("; jwCookies=")
+                                append(jwCookies.joinToString(",") { "${it.name}@${it.path}" })
+                                append("; casUpdatedAt=").append(cas?.updatedAt ?: 0L)
+                            }
+                        }
+                    }
                     message = when {
                         needsLogin -> "教务系统登录已过期，请重新登录"
                         needsPortal -> error.message ?: "零信任代理会话已失效"
@@ -75,6 +114,30 @@ fun SyncScreen(
                 }
             )
             busy = null
+        }
+    }
+
+    fun reopenLastSync() {
+        when (lastSyncLabel) {
+            "课表" -> runSync("课表") { syncManager.syncSchedule() }
+            "成绩" -> runSync("成绩") { syncManager.syncGrades() }
+            "考试安排" -> runSync("考试安排") { syncManager.syncExams() }
+        }
+    }
+
+    // 从登录页返回后自动清掉旧的“登录已过期”，并重试刚才那一项。
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (awaitingLogin || needsLogin) {
+            awaitingLogin = false
+            message = null
+            needsLogin = false
+            needsPortal = false
+            scope.launch {
+                // 给 WebView 的 Cookie 落库留一点时间，避免返回后立刻同步又拿到旧会话。
+                delay(700)
+                message = null
+                reopenLastSync()
+            }
         }
     }
 
@@ -119,7 +182,16 @@ fun SyncScreen(
                         modifier = Modifier.weight(1f)
                     )
                     if (needsLogin) {
-                        TextButton(onClick = onOpenLogin) { Text("去登录") }
+                        TextButton(onClick = {
+                            awaitingLogin = true
+                            onOpenLogin()
+                        }) { Text("去登录") }
+                        diagnostic?.let { info ->
+                            TextButton(
+                                onClick = { clipboard.setText(AnnotatedString(info)) },
+                                contentPadding = PaddingValues(horizontal = 4.dp)
+                            ) { Text("复制诊断") }
+                        }
                     } else if (needsPortal) {
                         TextButton(onClick = onOpenPortal) { Text("去门户") }
                     }

@@ -24,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -34,6 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ecut.campuspocket.data.repository.ElectricityDay
@@ -61,7 +64,19 @@ fun ElectricityScreen(
 ) {
     val days by viewModel.days.collectAsStateWithLifecycle()
     var range by rememberSaveable { mutableIntStateOf(7) }
+    var awaitingLogin by rememberSaveable { mutableStateOf(false) }
     val today = LocalDate.now()
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.sync(force = awaitingLogin)
+        awaitingLogin = false
+    }
+
+    fun openLogin() {
+        awaitingLogin = true
+        viewModel.clearMessage()
+        onOpenLogin()
+    }
     val dayByEpoch = remember(days) { days.associateBy { it.epochDay } }
     val windowStart = today.minusDays((range - 1).toLong())
     val displayed = remember(days, range, today) {
@@ -105,7 +120,10 @@ fun ElectricityScreen(
             Spacer(Modifier.width(4.dp))
             Text("电费", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { viewModel.sync() }, enabled = !viewModel.isSyncing) {
+            TextButton(
+                onClick = { viewModel.sync(force = true) },
+                enabled = !viewModel.isSyncing
+            ) {
                 if (viewModel.isSyncing) {
                     CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
@@ -152,10 +170,7 @@ fun ElectricityScreen(
                 )
                 if (viewModel.needsLogin) {
                     TextButton(
-                        onClick = {
-                            viewModel.clearMessage()
-                            onOpenLogin()
-                        },
+                        onClick = { openLogin() },
                         contentPadding = PaddingValues(horizontal = 6.dp)
                     ) { Text("去登录") }
                 } else {
@@ -250,7 +265,7 @@ fun ElectricityScreen(
             }
 
             if (days.isEmpty()) {
-                item { EmptyElectricityCard(onOpenLogin = onOpenLogin) }
+                item { EmptyElectricityCard(onOpenLogin = { openLogin() }) }
             } else if (usageDays.isEmpty()) {
                 item {
                     AppCard {

@@ -29,6 +29,19 @@ class AuthRepository(
     fun observeCredential(systemId: String): Flow<AuthCredentialEntity?> =
         authDao.observe(systemId)
 
+    /** 保存不透明 Token（例如慧生活 JWT），不参与 CookieJar。 */
+    suspend fun saveOpaqueToken(systemId: String, domain: String, token: String) {
+        if (token.isBlank()) return
+        authDao.upsert(
+            AuthCredentialEntity(
+                systemId = systemId,
+                domain = domain,
+                cookie = token,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
     /**
      * 保存 WebView 捕获的登录态。
      *
@@ -39,7 +52,9 @@ class AuthRepository(
     suspend fun saveLoginCookies(
         systemId: String,
         primaryHost: String,
-        cookieByHost: Map<String, String>
+        cookieByHost: Map<String, String>,
+        /** 每个域名对应一条 Cookie 在库里保存的 path；不传则用 "/"。 */
+        pathByHost: Map<String, String> = emptyMap()
     ) {
         val now = System.currentTimeMillis()
         val merged = cookieByHost.values
@@ -60,19 +75,23 @@ class AuthRepository(
 
         cookieByHost.forEach { (host, raw) ->
             if (raw.isBlank()) return@forEach
+            val path = pathByHost[host]?.takeIf { it.startsWith("/") } ?: "/"
             val rows = parseCookiePairs(raw).map { (name, value) ->
                 CookieEntity(
                     domain = host,
                     name = name,
                     value = value,
-                    path = "/",
+                    path = path,
                     expiresAt = 0L,
                     secure = false,
                     updatedAt = now
                 )
             }
             if (rows.isNotEmpty()) {
-                cookieDao.deleteForDomain(host)
+                // 同一 host 可能同时有 /sso 与 /jwglxt 两个 JSESSIONID。
+                // 同名 Cookie 只保留本次写库的这一份（按目标 path），
+                // 否则 CookieJar 可能拿到 /sso 的旧会话，表现为“网页已登录、同步仍过期”。
+                cookieDao.deleteForHostAndNames(host, rows.map { it.name }.distinct())
                 cookieDao.upsertAll(rows)
             }
         }
@@ -112,7 +131,8 @@ class AuthRepository(
         saveLoginCookies(
             systemId = CampusEndpoints.SYSTEM_CAS_MASTER,
             primaryHost = CampusEndpoints.CAS_HOST,
-            cookieByHost = mapOf(CampusEndpoints.CAS_HOST to header)
+            cookieByHost = mapOf(CampusEndpoints.CAS_HOST to header),
+            pathByHost = mapOf(CampusEndpoints.CAS_HOST to "/authserver")
         )
     }
 
