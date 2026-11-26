@@ -39,6 +39,35 @@ class ElectricityViewModel(
         private set
 
     private var lastSyncAt = 0L
+    private var lastSuccessAt = 0L
+
+    /** 首页使用：配置了电费参数时，按需静默同步，避免长期未打开电费页造成历史断层。 */
+    fun ensureFresh(maxAgeMillis: Long = 30 * 60 * 1000L) {
+        val now = System.currentTimeMillis()
+        if (isSyncing) return
+        if (lastSuccessAt > 0L && now - lastSuccessAt < maxAgeMillis) return
+        if (now - lastSyncAt < 2 * 60 * 1000L) return
+        lastSyncAt = now
+        viewModelScope.launch {
+            isSyncing = true
+            val first = repository.refresh()
+            if (first.isSuccess) {
+                lastSuccessAt = System.currentTimeMillis()
+            } else if (first.exceptionOrNull() is SessionExpiredException) {
+                val recovery = runCatching {
+                    AppContainer.sessionRecoveryManager.recoverElectricitySession()
+                }.getOrNull()
+                if (recovery is SessionRecoveryResult.AlreadyValid ||
+                    recovery is SessionRecoveryResult.AutoLoggedIn
+                ) {
+                    if (repository.refresh().isSuccess) {
+                        lastSuccessAt = System.currentTimeMillis()
+                    }
+                }
+            }
+            isSyncing = false
+        }
+    }
 
     /**
      * 同步电费。默认 20 秒内重复进入页面不重复请求；
@@ -98,6 +127,7 @@ class ElectricityViewModel(
     }
 
     private fun reportSuccess(snapshot: com.ecut.campuspocket.data.remote.electricity.XgwxSnapshot) {
+        lastSuccessAt = System.currentTimeMillis()
         val balance = snapshot.balance?.let { "¥%.2f".format(it) } ?: "--"
         message = "已同步 ${snapshot.houseLabel} · 电表余额 $balance"
     }

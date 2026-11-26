@@ -115,11 +115,17 @@ object AppContainer {
     }
 
     val xgwxElectricityClient: XgwxElectricityClient by lazy {
-        // 宿舍缴费过期时会 302 到 CAS；允许跟随重定向，用本地 CASTGC 自动换票。
+        // 宿舍缴费过期时会 302 到 CAS；允许跟随重定向，用本地 CASTGC 自动换票，必要时触发自动登录。
         XgwxElectricityClient(
             client = baseHttpClient,
             ssoManager = casSsoManager,
-            operatorPwdProvider = { runtimeConfig.get().electricityOperatorPwd }
+            operatorPwdProvider = { runtimeConfig.get().electricityOperatorPwd },
+            clearSessionCookies = { authRepository.clearCookiesForHost("xgwx.ecut.edu.cn") },
+            onSessionRecovery = {
+                val res = sessionRecoveryManager.recoverElectricitySession()
+                res is com.ecut.campuspocket.network.SessionRecoveryResult.AlreadyValid ||
+                    res is com.ecut.campuspocket.network.SessionRecoveryResult.AutoLoggedIn
+            }
         )
     }
 
@@ -168,12 +174,21 @@ object AppContainer {
             electricityIndexUrlProvider = {
                 val pwd = runtimeConfig.get().electricityOperatorPwd
                 if (pwd.isBlank()) "" else CampusEndpoints.electricityIndexUrl(pwd)
-            }
+            },
+            clearHostCookies = { host -> authRepository.clearCookiesForHost(host) }
         )
     }
 
     val jwAdapter: JwAdapter by lazy {
-        JwAdapter(casHttpClient, ssoManager = casSsoManager) {
+        JwAdapter(
+            client = casHttpClient,
+            ssoManager = casSsoManager,
+            sessionRecovery = {
+                val res = sessionRecoveryManager.recoverJwDirectSession()
+                res is com.ecut.campuspocket.network.SessionRecoveryResult.AlreadyValid ||
+                    res is com.ecut.campuspocket.network.SessionRecoveryResult.AutoLoggedIn
+            }
+        ) {
             val state = CampusNetworkStatus.state.value
             val proxyCredential = authRepository.getCredential(CampusEndpoints.SYSTEM_JW_PROXY)
             // 只有落在教务代理域名上的会话才可用；门户主页 atrust1 的 Cookie 不算。
@@ -199,7 +214,15 @@ object AppContainer {
     }
 
     val campusCardClient: CampusCardClient by lazy {
-        CampusCardClient(baseHttpClient, ssoManager = casSsoManager)
+        CampusCardClient(
+            client = baseHttpClient,
+            ssoManager = casSsoManager,
+            sessionRecovery = {
+                val res = sessionRecoveryManager.recoverCasSession()
+                res is com.ecut.campuspocket.network.SessionRecoveryResult.AlreadyValid ||
+                    res is com.ecut.campuspocket.network.SessionRecoveryResult.AutoLoggedIn
+            }
+        )
     }
 
     /** 公开天气接口，不需要登录态；复用同一个 OkHttp 连接池。 */

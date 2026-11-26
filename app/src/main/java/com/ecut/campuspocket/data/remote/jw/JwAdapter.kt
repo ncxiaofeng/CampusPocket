@@ -121,6 +121,7 @@ data class JwBaseUrl(val url: String, val isProxy: Boolean)
 class JwAdapter(
     private val client: OkHttpClient,
     private val ssoManager: CasSsoManager? = null,
+    private val sessionRecovery: (suspend () -> Boolean)? = null,
     /** 按优先级返回候选基地址（校内直连 / WebVPN 代理）。 */
     private val baseUrlsProvider: suspend () -> List<JwBaseUrl>
 ) {
@@ -159,7 +160,15 @@ class JwAdapter(
         ) {
             return false
         }
-        val ok = manager.ensureServiceSession(CampusEndpoints.JW_SSO_URL)
+        var ok = manager.ensureServiceSession(CampusEndpoints.JW_SSO_URL)
+        val recovery = sessionRecovery
+        if (!ok && recovery != null) {
+            // CASTGC 也过期且用户开启了自动登录：在后台重新认证 CAS 后再换一次教务票。
+            val recovered = runCatching { recovery.invoke() }.getOrDefault(false)
+            if (recovered) {
+                ok = manager.ensureServiceSession(CampusEndpoints.JW_SSO_URL)
+            }
+        }
         lastBootstrapDiagnostic =
             "masterUpdated=$masterUpdatedAt lastFailed=$lastFailedBootstrapAt ok=$ok"
         Log.d("JwDiag", "bootstrapDirectSession $lastBootstrapDiagnostic")

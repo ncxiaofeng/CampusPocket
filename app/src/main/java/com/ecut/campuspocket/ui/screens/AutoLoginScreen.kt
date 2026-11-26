@@ -89,24 +89,71 @@ fun AutoLoginScreen(
         enabled = false
         preferences.autoLoginEnabled = false
         preferences.autoLoginBlockedUntil = 0L
-        message = "已加密保存，正在测试登录…"
+        message = "已加密保存，正在测试统一认证与门户登录…"
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
+            val casResult = withContext(Dispatchers.IO) {
                 AppContainer.casAutoLogin.login(testUsername, testPassword)
+            }
+            if (casResult.isSuccess) {
+                val portalResult = withContext(Dispatchers.IO) {
+                    AppContainer.casAutoLogin.loginPortal(testUsername, testPassword)
+                }
+                testing = false
+                enabled = true
+                preferences.autoLoginEnabled = true
+                preferences.autoLoginBlockedUntil = 0L
+                message = if (portalResult.isSuccess) {
+                    "保存成功，统一认证与零信任门户无感登录均已打通"
+                } else {
+                    "统一认证测试通过，自动登录已开启（门户暂未连通：${portalResult.exceptionOrNull()?.message ?: "校外或需要时会自动重试"}）"
+                }
+            } else {
+                // 校外或特定网络下直连 CAS 失败时，再试一次零信任门户 CAS。
+                val portalResult = withContext(Dispatchers.IO) {
+                    AppContainer.casAutoLogin.loginPortal(testUsername, testPassword)
+                }
+                testing = false
+                if (portalResult.isSuccess) {
+                    enabled = true
+                    preferences.autoLoginEnabled = true
+                    preferences.autoLoginBlockedUntil = 0L
+                    message = "保存成功，零信任门户无感登录已打通，自动登录已开启"
+                } else {
+                    enabled = false
+                    preferences.autoLoginEnabled = false
+                    message = "已保存，但测试登录未通过：${casResult.exceptionOrNull()?.message ?: "未知错误"}。" +
+                        "自动登录暂未开启；请核对密码后重试。"
+                }
+            }
+        }
+    }
+
+    fun testPortalNow() {
+        if (testing) return
+        if (!hasSaved) {
+            message = "请先填写账号密码并点「保存并测试」"
+            return
+        }
+        testing = true
+        message = "正在测试零信任门户无感登录…"
+        scope.launch {
+            val creds = withContext(Dispatchers.IO) { vault.load() }
+            if (creds == null) {
+                testing = false
+                message = "本机保存的账号密码无法解密，请重新保存"
+                return@launch
+            }
+            val result = withContext(Dispatchers.IO) {
+                AppContainer.casAutoLogin.loginPortal(creds.username, creds.password)
             }
             testing = false
             result.fold(
                 onSuccess = {
-                    enabled = true
-                    preferences.autoLoginEnabled = true
                     preferences.autoLoginBlockedUntil = 0L
-                    message = "保存成功，统一认证测试登录通过，自动登录已开启"
+                    message = "零信任门户无感登录测试通过，打开门户将自动进入"
                 },
                 onFailure = {
-                    enabled = false
-                    preferences.autoLoginEnabled = false
-                    message = "已保存，但测试登录未通过：${it.message ?: "未知错误"}。" +
-                        "自动登录暂未开启；可以稍后重试，或手动打开开关。"
+                    message = "零信任门户测试失败：${it.message ?: "未知错误"}"
                 }
             )
         }
@@ -176,17 +223,19 @@ fun AutoLoginScreen(
                                     } else if (hasSaved) {
                                         enabled = true
                                         preferences.autoLoginEnabled = true
+                                        preferences.autoLoginBlockedUntil = 0L
                                         message = "自动登录已开启"
                                     } else {
-                                        enabled = true
-                                        message = "请填写账号密码并点「保存并测试」"
+                                        enabled = false
+                                        message = "请先填写账号密码并点「保存并测试」"
                                     }
                                 }
                             )
                         }
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "统一认证会话失效时，App 会用这里的账号密码在后台完成一次官方网站登录。" +
+                            "统一认证或零信任门户会话失效时，App 会用这里的账号密码在后台完成官方认证，" +
+                                "自动覆盖课表、成绩、电费、校园卡及零信任门户/办事大厅无感进入。" +
                                 "密码不会上传，也不会写入日志；关闭开关会立即删除密文和密钥。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -237,7 +286,15 @@ fun AutoLoginScreen(
                             }
                             if (hasSaved) {
                                 TextButton(
+                                    onClick = { testPortalNow() },
+                                    enabled = !testing,
+                                    contentPadding = PaddingValues(horizontal = 6.dp)
+                                ) {
+                                    Text("测门户")
+                                }
+                                TextButton(
                                     onClick = { clearSaved() },
+                                    enabled = !testing,
                                     contentPadding = PaddingValues(horizontal = 8.dp)
                                 ) {
                                     Text("删除", color = ErrorRed)

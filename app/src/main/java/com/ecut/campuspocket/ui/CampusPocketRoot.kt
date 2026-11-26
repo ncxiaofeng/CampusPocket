@@ -107,11 +107,14 @@ import com.ecut.campuspocket.navigation.Routes
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CampusNetworkState
 import com.ecut.campuspocket.network.CampusNetworkStatus
+import com.ecut.campuspocket.network.CasAutoLogin
+import com.ecut.campuspocket.network.SessionRecoveryResult
 import com.ecut.campuspocket.ui.screens.AboutScreen
 import com.ecut.campuspocket.ui.screens.AutoLoginScreen
 import com.ecut.campuspocket.ui.screens.CampusCardScreen
 import com.ecut.campuspocket.ui.screens.ChaoxingScreen
 import com.ecut.campuspocket.ui.screens.CampusWebPageScreen
+import com.ecut.campuspocket.ui.screens.WebAutoLoginMode
 import com.ecut.campuspocket.ui.screens.ClassroomsScreen
 import com.ecut.campuspocket.ui.screens.ElectricityScreen
 import com.ecut.campuspocket.ui.screens.ExamsScreen
@@ -227,8 +230,26 @@ fun CampusPocketRoot(
                     autoJumpHandled = true
                 } else if (!autoJumpHandled) {
                     autoJumpHandled = true
-                    navController.navigate(Routes.VPN_LOGIN) {
-                        launchSingleTop = true
+                    if (AppContainer.sessionRecoveryManager.isAutoLoginReady()) {
+                        // 开启了自动登录：先后台无感认证零信任门户，成功则不打断用户。
+                        val res = withContext(Dispatchers.IO) {
+                            runCatching {
+                                AppContainer.sessionRecoveryManager.recoverPortalSession()
+                            }.getOrElse {
+                                SessionRecoveryResult.Failed(it.message ?: "自动登录失败")
+                            }
+                        }
+                        if (res !is SessionRecoveryResult.AlreadyValid &&
+                            res !is SessionRecoveryResult.AutoLoggedIn
+                        ) {
+                            navController.navigate(Routes.VPN_LOGIN) {
+                                launchSingleTop = true
+                            }
+                        }
+                    } else {
+                        navController.navigate(Routes.VPN_LOGIN) {
+                            launchSingleTop = true
+                        }
                     }
                 }
             }
@@ -384,7 +405,8 @@ fun CampusPocketRoot(
                         saveSessionPath = "/jwglxt",
                         detectSessionLost = false,
                         sourceName = "教务系统",
-                        rememberCasLogin = true
+                        rememberCasLogin = true,
+                        autoLoginMode = WebAutoLoginMode.CAS
                     )
                 } else {
                     // 校外：教务内网地址不可达，先完成统一认证（落到 ehall）。
@@ -410,13 +432,19 @@ fun CampusPocketRoot(
                     url = CampusEndpoints.ATRUST_PORTAL_URL,
                     onBack = { navController.popBackStack() },
                     helperText = "学校零信任门户；可切 PC 版。进入“新教务管理系统”任一功能一次，之后 App 就能校外同步课表/成绩。",
-                    extraCookieHosts = listOf("atrust1.ecut.edu.cn"),
+                    extraCookieHosts = listOf(
+                        CasAutoLogin.ATRUST_PORTAL_HOST,
+                        CasAutoLogin.ATRUST_CAS_HOST,
+                        CampusEndpoints.JW_PROXY_HOST
+                    ),
                     userAgent = CampusEndpoints.MOBILE_BROWSER_USER_AGENT,
                     detectSessionLost = false,
                     sourceName = "零信任门户",
                     openInBrowser = true,
                     saveProxySession = true,
-                    userAgentSwitch = true
+                    userAgentSwitch = true,
+                    rememberCasLogin = true,
+                    autoLoginMode = WebAutoLoginMode.PORTAL
                 )
             }
             composable(Routes.ELECTRICITY_LOGIN) {
@@ -472,7 +500,9 @@ fun CampusPocketRoot(
                     onBack = { navController.popBackStack() },
                     onOpenLogin = { navController.navigate(Routes.LOGIN) },
                     helperText = "教务官方空闲教室页面（只读），可用更多筛选条件。",
-                    extraCookieHosts = listOf("authserver.ecut.edu.cn")
+                    extraCookieHosts = listOf("authserver.ecut.edu.cn"),
+                    rememberCasLogin = true,
+                    autoLoginMode = WebAutoLoginMode.CAS
                 )
             }
             composable(Routes.NOTICES) {
@@ -544,7 +574,9 @@ fun CampusPocketRoot(
                     detectSessionLost = false,
                     sourceName = "网上办事大厅",
                     openInBrowser = true,
-                    userAgentSwitch = true
+                    userAgentSwitch = true,
+                    rememberCasLogin = true,
+                    autoLoginMode = WebAutoLoginMode.CAS
                 )
             }
             composable(Routes.LIBRARY) {
@@ -584,7 +616,9 @@ fun CampusPocketRoot(
                     openInBrowser = true,
                     saveSessionHost = "ehall.ecut.edu.cn",
                     saveSessionSystemId = CampusEndpoints.SYSTEM_CARD,
-                    userAgentSwitch = true
+                    userAgentSwitch = true,
+                    rememberCasLogin = true,
+                    autoLoginMode = WebAutoLoginMode.CAS
                 )
             }
             composable(Routes.LAUNDRY) {
@@ -651,11 +685,15 @@ fun CampusPocketRoot(
                     title = "学习通",
                     url = url.ifBlank { CampusEndpoints.CHAOXING_LOGIN_URL },
                     onBack = { navController.popBackStack() },
-                    helperText = "学习通官方页面（只读）；签到、交作业等操作请自行确认。",
+                    helperText = "学习通官方页面（只读）；支持双指缩放、右上角切换阅读版或浏览器打开。",
                     extraCookieHosts = CampusEndpoints.CHAOXING_HOSTS.toList(),
                     desktopUserAgent = false,
+                    userAgent = CampusEndpoints.MOBILE_BROWSER_USER_AGENT,
                     detectSessionLost = false,
-                    sourceName = "学习通"
+                    sourceName = "学习通",
+                    openInBrowser = true,
+                    mobileViewportFix = true,
+                    readerModeAvailable = true
                 )
             }
             }

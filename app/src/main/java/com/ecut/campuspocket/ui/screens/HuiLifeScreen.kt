@@ -28,6 +28,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.outlined.Air
+import androidx.compose.material.icons.outlined.LocalLaundryService
+import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.Shower
+import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,6 +61,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceKind
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeDiagnostics
 import com.ecut.campuspocket.data.remote.huilife.HuiLifePlatform
 import com.ecut.campuspocket.ui.components.AppCard
@@ -184,7 +190,7 @@ fun HuiLifeScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "饮水 / 热水 / 淋浴 · 扫码后手动启动 · 不提供停止",
+                    text = "饮水 / 吹风 / 淋浴 · 扫码后手动启动 · 不提供停止",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -391,15 +397,31 @@ fun HuiLifeScreen(
                                             .padding(horizontal = 16.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        IconBadge(text = "水", color = ChartPrimary, size = 34.dp)
+                                        val (deviceIcon, deviceIconColor) = when (device.kind) {
+                                            HuiLifeDeviceKind.HAIR_DRYER -> Icons.Outlined.Air to WarningAmber
+                                            HuiLifeDeviceKind.SHOWER -> Icons.Outlined.Shower to CourseBlue
+                                            HuiLifeDeviceKind.LAUNDRY -> Icons.Outlined.LocalLaundryService to CourseTeal
+                                            HuiLifeDeviceKind.WATER -> Icons.Outlined.WaterDrop to ChartPrimary
+                                            HuiLifeDeviceKind.OTHER -> Icons.Outlined.QrCode2 to CourseBlue
+                                        }
+                                        IconBadge(icon = deviceIcon, color = deviceIconColor, size = 34.dp)
                                         Spacer(Modifier.width(12.dp))
-                                        Column(Modifier.weight(1f)) {
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clickable { viewModel.openRename(device) }
+                                        ) {
                                             Text(device.name, style = MaterialTheme.typography.titleSmall)
+                                            val isUnnamed = device.name.startsWith("未命名设备") ||
+                                                device.name.startsWith("扫码设备")
                                             Text(
                                                 buildString {
                                                     append(device.detail.ifBlank { device.id })
                                                     if (status != null) {
                                                         append(" · ").append(status.label)
+                                                    }
+                                                    if (isUnnamed) {
+                                                        append(" · 点此备注")
                                                     }
                                                 },
                                                 style = MaterialTheme.typography.labelSmall,
@@ -539,16 +561,65 @@ fun HuiLifeScreen(
             onDismissRequest = { viewModel.cancelStart() },
             title = { Text("启动 ${device.name}？") },
             text = {
-                Text(
-                    "设备会开始出水，费用按实际用量从校园钱包扣除。请确认已经放好容器。",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                val startHint = when (device.kind) {
+                    HuiLifeDeviceKind.HAIR_DRYER ->
+                        "吹风机将会通电启动，费用按实际使用时长从校园钱包扣除。请确认你就在设备旁边。"
+                    HuiLifeDeviceKind.SHOWER ->
+                        "淋浴设备将会启动，费用按实际用量从校园钱包扣除。请确认你就在设备旁边。"
+                    HuiLifeDeviceKind.LAUNDRY ->
+                        "洗衣设备将会启动，费用按实际程序从校园钱包扣除。请确认已经放好衣物。"
+                    else ->
+                        "设备将会启动，费用按实际用量从校园钱包扣除。请确认已经做好准备。"
+                }
+                Text(startHint, style = MaterialTheme.typography.bodySmall)
             },
             confirmButton = {
                 Button(onClick = { viewModel.confirmStart() }) { Text("确认启动") }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.cancelStart() }) { Text("取消") }
+            }
+        )
+    }
+
+    viewModel.renameTarget?.let { device ->
+        var draft by remember(device.id) {
+            mutableStateOf(viewModel.customNameFor(device.id).ifBlank { device.name })
+        }
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissRename() },
+            title = { Text("备注设备名称") },
+            text = {
+                Column {
+                    Text(
+                        "设备编号：${device.id}。留空保存可恢复接口默认名称。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it.take(32) },
+                        label = { Text("设备名称 / 备注") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.saveCustomName(device.id, draft) }) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (viewModel.customNameFor(device.id).isNotBlank()) {
+                        TextButton(onClick = { viewModel.saveCustomName(device.id, "") }) {
+                            Text("恢复默认")
+                        }
+                    }
+                    TextButton(onClick = { viewModel.dismissRename() }) { Text("取消") }
+                }
             }
         )
     }

@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,7 +53,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.network.CampusEndpoints
+import com.ecut.campuspocket.network.CasAutoLogin
 import com.ecut.campuspocket.network.LoginTarget
+import com.ecut.campuspocket.network.SessionRecoveryResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -69,6 +72,7 @@ fun LoginWebViewScreen(
     target: LoginTarget = CampusEndpoints.JW_LOGIN
 ) {
     val repo = AppContainer.authRepository
+    val recoveryManager = AppContainer.sessionRecoveryManager
     val scope = rememberCoroutineScope()
     val primaryHost = remember(target) { target.primaryHost }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -76,7 +80,89 @@ fun LoginWebViewScreen(
     var isLoading by remember { mutableStateOf(true) }
     var saved by remember { mutableStateOf(false) }
     var autoCompleting by remember { mutableStateOf(false) }
+    var autoLoginAttempted by remember(target.systemId) { mutableStateOf(false) }
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
+
+    suspend fun preloadCookiesToWebView() {
+        val manager = CookieManager.getInstance()
+        manager.setAcceptCookie(true)
+        val hosts = linkedSetOf(primaryHost, CampusEndpoints.CAS_HOST)
+        if (target.systemId == CampusEndpoints.SYSTEM_CAS) {
+            hosts += CasAutoLogin.ATRUST_CAS_HOST
+            hosts += CasAutoLogin.ATRUST_PORTAL_HOST
+        }
+        target.extraCookieUrls.mapNotNullTo(hosts) { Uri.parse(it).host }
+        hosts.filter { it.isNotBlank() }.forEach { host ->
+            val rows = runCatching {
+                repo.loadCookiesForHost(host)
+            }.getOrDefault(emptyList())
+            val scheme = when {
+                host in target.httpsHosts -> "https"
+                host.contains("authserver") ||
+                    host.contains("atrust") ||
+                    host.contains("libspace") -> "https"
+                target.startUrl.startsWith("https://") -> "https"
+                else -> "http"
+            }
+            rows.forEach { row ->
+                val path = row.path.ifBlank { "/" }
+                manager.setCookie(
+                    "$scheme://$host$path",
+                    "${row.name}=${row.value}; path=$path"
+                )
+            }
+        }
+        manager.flush()
+    }
+
+    // 开启了「自动登录」时，进入 CAS / 零信任 / 电费登录页先尝试后台无感完成，
+    // 成功直接返回（或把新会话注入 WebView 自动落页），减少手动输密码。
+    LaunchedEffect(target.systemId) {
+        if (!target.rememberLogin || autoLoginAttempted || !recoveryManager.isAutoLoginReady()) {
+            return@LaunchedEffect
+        }
+        autoLoginAttempted = true
+        statusIsError = false
+        statusMessage = "正在尝试后台自动登录…"
+        val recovery = runCatching {
+            when (target.systemId) {
+                CampusEndpoints.SYSTEM_CAS ->
+                    recoveryManager.recoverPortalSession(forceRetry = true)
+                CampusEndpoints.SYSTEM_ELECTRICITY ->
+                    recoveryManager.recoverElectricitySession(forceRetry = true)
+                else ->
+                    recoveryManager.recoverCasSession(forceRetry = true)
+            }
+        }.getOrElse {
+            SessionRecoveryResult.Failed(it.message ?: "自动登录失败")
+        }
+        when (recovery) {
+            is SessionRecoveryResult.AlreadyValid,
+            is SessionRecoveryResult.AutoLoggedIn -> {
+                if (target.systemId == CampusEndpoints.SYSTEM_CAS ||
+                    target.systemId == CampusEndpoints.SYSTEM_CAS_MASTER
+                ) {
+                    saved = true
+                    statusIsError = false
+                    statusMessage = "已通过自动登录完成认证"
+                    delay(600)
+                    onBack()
+                } else {
+                    preloadCookiesToWebView()
+                    statusIsError = false
+                    statusMessage = "已恢复统一认证，正在自动进入…"
+                    webViewRef.value?.loadUrl(target.startUrl)
+                }
+            }
+            is SessionRecoveryResult.Failed -> {
+                statusIsError = true
+                statusMessage = "自动登录暂停：${recovery.message}，请在下方手动登录"
+            }
+            is SessionRecoveryResult.NoCredentials -> {
+                statusMessage = null
+            }
+        }
+    }
 
     fun cookieNamesOf(raw: String): Set<String> = raw.split(";")
         .mapNotNull { part ->
@@ -438,31 +524,7 @@ fun LoginWebViewScreen(
                     webViewRef.value = webView
                     if (target.preloadStoredCookies) {
                         scope.launch {
-                            val manager = CookieManager.getInstance()
-                            manager.setAcceptCookie(true)
-                            val hosts = linkedSetOf(primaryHost, CampusEndpoints.CAS_HOST)
-                            target.extraCookieUrls.mapNotNullTo(hosts) { Uri.parse(it).host }
-                            hosts.filter { it.isNotBlank() }.forEach { host ->
-                                val rows = runCatching {
-                                    repo.loadCookiesForHost(host)
-                                }.getOrDefault(emptyList())
-                                val scheme = when {
-                                    host in target.httpsHosts -> "https"
-                                    host.contains("authserver") ||
-                                        host.contains("atrust") ||
-                                        host.contains("libspace") -> "https"
-                                    target.startUrl.startsWith("https://") -> "https"
-                                    else -> "http"
-                                }
-                                rows.forEach { row ->
-                                    val path = row.path.ifBlank { "/" }
-                                    manager.setCookie(
-                                        "$scheme://$host$path",
-                                        "${row.name}=${row.value}; path=$path"
-                                    )
-                                }
-                            }
-                            manager.flush()
+                            preloadCookiesToWebView()
                             webView.loadUrl(target.startUrl)
                         }
                     } else {

@@ -152,18 +152,32 @@ class HuiLifeRepository(
             )
         }
 
-    suspend fun fetchDeviceStatus(deviceId: String): Result<HuiLifeDeviceStatus> {
+    suspend fun fetchDeviceStatus(
+        deviceId: String,
+        more: Boolean = false
+    ): Result<HuiLifeDeviceStatus> {
         val app = appToken()
         if (app != null) {
-            return client.fetchDeviceStatus(app, HuiLifePlatform.APP, deviceId)
+            return client.fetchDeviceStatus(app, HuiLifePlatform.APP, deviceId, more)
         }
         val account = accountToken() ?: return Result.failure(
             IllegalStateException("请先登录慧生活798")
         )
-        return client.fetchDeviceStatus(account, HuiLifePlatform.ACCOUNT, deviceId)
+        return client.fetchDeviceStatus(account, HuiLifePlatform.ACCOUNT, deviceId, more)
     }
 
-    suspend fun resolveQrDevice(qrId: String): Result<String> {
+    suspend fun fetchDeviceInfo(deviceId: String): Result<HuiLifeDevice?> {
+        val app = appToken()
+        if (app != null) {
+            return client.fetchDeviceInfo(app, HuiLifePlatform.APP, deviceId)
+        }
+        val account = accountToken() ?: return Result.failure(
+            IllegalStateException("请先登录慧生活798")
+        )
+        return client.fetchDeviceInfo(account, HuiLifePlatform.ACCOUNT, deviceId)
+    }
+
+    suspend fun resolveQrDevice(qrId: String): Result<HuiLifeDevice> {
         val app = appToken() ?: return Result.failure(
             IllegalStateException("扫码解析需要先完成「设备控制」登录")
         )

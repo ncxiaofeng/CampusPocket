@@ -52,22 +52,70 @@ class HuiLifeViewModel(
         private set
     var scannedDevices by mutableStateOf(preferences.huiLifeScannedDevices)
         private set
+    var cachedDeviceNames by mutableStateOf(preferences.huiLifeDeviceNames)
+        private set
+    var cachedDeviceDetails by mutableStateOf(preferences.huiLifeDeviceDetails)
+        private set
+    var customDeviceNames by mutableStateOf(preferences.huiLifeCustomDeviceNames)
+        private set
+    var renameTarget by mutableStateOf<HuiLifeDevice?>(null)
+        private set
     var statusById by mutableStateOf<Map<String, HuiLifeDeviceStatus>>(emptyMap())
+        private set
+    var probedInfoById by mutableStateOf<Map<String, HuiLifeDevice>>(emptyMap())
         private set
 
     private var statusRefreshing = false
 
-    /** 设备列表 + 用户扫过但接口没返回的编号；只有扫码的设备能启动。 */
+    /**
+     * 设备列表 + 用户扫过但接口没返回的编号；只有扫码的设备能启动。
+     *
+     * 名称优先级：用户自定义备注 > 收藏列表名 > 状态接口名 > 最近账单名 > 本地缓存名 > 带尾号的可区分兜底名。
+     */
     val allDevices: List<HuiLifeDevice>
         get() {
-            val known = dashboard?.devices.orEmpty()
+            val billsById = dashboard?.bills.orEmpty()
+                .filter { it.deviceId.isNotBlank() && it.deviceName.isNotBlank() }
+                .associate { it.deviceId to it.deviceName }
+            val known = dashboard?.devices.orEmpty().map { device ->
+                val status = statusById[device.id]
+                val resolvedName = resolveDisplayName(
+                    id = device.id,
+                    serverName = device.name,
+                    statusName = status?.deviceName.orEmpty(),
+                    billName = billsById[device.id].orEmpty(),
+                    cachedName = cachedDeviceNames[device.id].orEmpty(),
+                    customName = customDeviceNames[device.id].orEmpty()
+                )
+                val resolvedDetail = device.detail.ifBlank {
+                    status?.deviceDetail.orEmpty()
+                }
+                device.copy(name = resolvedName, detail = resolvedDetail)
+            }
+            val knownIds = known.mapTo(mutableSetOf()) { it.id }
             val extras = scannedDevices
-                .filter { id -> known.none { it.id == id } }
-                .map {
+                .filter { it !in knownIds }
+                .map { id ->
+                    val status = statusById[id]
+                    val probed = probedInfoById[id]
+                    val resolvedName = resolveDisplayName(
+                        id = id,
+                        serverName = probed?.name.orEmpty(),
+                        statusName = status?.deviceName.orEmpty(),
+                        billName = billsById[id].orEmpty(),
+                        cachedName = cachedDeviceNames[id].orEmpty(),
+                        customName = customDeviceNames[id].orEmpty()
+                    )
+                    val detail = probed?.detail.orEmpty()
+                        .ifBlank { status?.deviceDetail.orEmpty() }
+                        .ifBlank { cachedDeviceDetails[id].orEmpty() }
+                        .ifBlank { "编号 ${shortDeviceSuffix(id)}" }
                     HuiLifeDevice(
-                        id = it,
-                        name = "扫码设备",
-                        detail = "已添加，等待状态同步"
+                        id = id,
+                        name = resolvedName,
+                        detail = detail,
+                        typeCode = probed?.typeCode.orEmpty()
+                            .ifBlank { status?.deviceTypeCode.orEmpty() }
                     )
                 }
             return known + extras
@@ -77,9 +125,13 @@ class HuiLifeViewModel(
 
     fun statusFor(deviceId: String): HuiLifeDeviceStatus? = statusById[deviceId]
 
+    fun customNameFor(deviceId: String): String = customDeviceNames[deviceId].orEmpty()
+
     /** 已扫码 + 状态为空闲/在线，才允许启动；使用中/离线/禁用都不显示启动。 */
     fun canStart(deviceId: String): Boolean =
         appLoggedIn && isScanned(deviceId) && (statusById[deviceId]?.canStart ?: true)
+
+    private val probedInfoIds = mutableSetOf<String>()
 
     fun refreshStatuses() {
         if (statusRefreshing) return
@@ -90,9 +142,54 @@ class HuiLifeViewModel(
         viewModelScope.launch {
             try {
                 val updated = statusById.toMutableMap()
+                val knownServerIds = dashboard?.devices.orEmpty()
+                    .filter { it.name.isNotBlank() && it.name != "未命名设备" }
+                    .mapTo(mutableSetOf()) { it.id }
                 devices.forEach { device ->
-                    repository.fetchDeviceStatus(device.id)
-                        .onSuccess { updated[device.id] = it }
+                    val cached = cachedDeviceNames[device.id].orEmpty()
+                    val needsName = device.id !in knownServerIds &&
+                        (cached.isBlank() || isGenericPlaceholderName(cached))
+                    val needsDetail = device.id !in knownServerIds &&
+                        cachedDeviceDetails[device.id].isNullOrBlank()
+                    repository.fetchDeviceStatus(device.id, more = needsName)
+                        .onSuccess { status ->
+                            updated[device.id] = status
+                            if (status.deviceName.isNotBlank() &&
+                                !isGenericPlaceholderName(status.deviceName)
+                            ) {
+                                cachedDeviceNames = preferences.saveHuiLifeDeviceName(
+                                    device.id,
+                                    status.deviceName
+                                )
+                            }
+                            if (status.deviceDetail.isNotBlank()) {
+                                cachedDeviceDetails = preferences.saveHuiLifeDeviceDetail(
+                                    device.id,
+                                    status.deviceDetail
+                                )
+                            }
+                        }
+                    if ((needsName || needsDetail) && probedInfoIds.add(device.id)) {
+                        repository.fetchDeviceInfo(device.id).onSuccess { info ->
+                            if (info != null) {
+                                probedInfoById = probedInfoById + (device.id to info)
+                                if (info.name.isNotBlank() &&
+                                    !isGenericPlaceholderName(info.name)
+                                ) {
+                                    cachedDeviceNames = preferences.saveHuiLifeDeviceName(
+                                        device.id,
+                                        info.name
+                                    )
+                                }
+                                if (info.detail.isNotBlank()) {
+                                    cachedDeviceDetails = preferences.saveHuiLifeDeviceDetail(
+                                        device.id,
+                                        info.detail
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 statusById = updated
             } finally {
@@ -214,8 +311,25 @@ class HuiLifeViewModel(
         viewModelScope.launch {
             loading = true
             repository.loadDashboard().fold(
-                onSuccess = {
-                    dashboard = it
+                onSuccess = { loaded ->
+                    dashboard = loaded
+                    // 把收藏设备和最近账单里看到的真实设备名都沉淀到本地缓存。
+                    loaded.devices.forEach { device ->
+                        if (device.name.isNotBlank() && device.name != "未命名设备") {
+                            cachedDeviceNames = preferences.saveHuiLifeDeviceName(
+                                device.id,
+                                device.name
+                            )
+                        }
+                    }
+                    loaded.bills.forEach { bill ->
+                        if (bill.deviceId.isNotBlank() && bill.deviceName.isNotBlank()) {
+                            cachedDeviceNames = preferences.saveHuiLifeDeviceName(
+                                bill.deviceId,
+                                bill.deviceName
+                            )
+                        }
+                    }
                     if (message?.startsWith("读取失败") == true) message = null
                 },
                 onFailure = { message = "读取失败：${it.message}" }
@@ -255,8 +369,8 @@ class HuiLifeViewModel(
             viewModelScope.launch {
                 loading = true
                 repository.resolveQrDevice(qrId).fold(
-                    onSuccess = { id ->
-                        markScanned(id)
+                    onSuccess = { device ->
+                        markScanned(device.id, resolvedName = device.name)
                     },
                     onFailure = { message = "二维码解析失败：${it.message}" }
                 )
@@ -272,15 +386,62 @@ class HuiLifeViewModel(
         markScanned(id)
     }
 
-    private fun markScanned(id: String) {
+    private fun markScanned(id: String, resolvedName: String = "") {
         scannedDevices = preferences.markHuiLifeDeviceScanned(id)
-        val known = dashboard?.devices?.firstOrNull { it.id == id }
-        message = if (known != null) {
-            "已扫码：${known.name}，现在可以启动"
-        } else {
-            "已添加设备 $id；状态同步后即可启动"
+        if (resolvedName.isNotBlank() && resolvedName != "未命名设备") {
+            cachedDeviceNames = preferences.saveHuiLifeDeviceName(id, resolvedName)
         }
-        refreshStatuses()
+        val known = dashboard?.devices?.firstOrNull { it.id == id }
+        val displayName = resolveDisplayName(
+            id = id,
+            serverName = known?.name.orEmpty().ifBlank { resolvedName },
+            statusName = statusById[id]?.deviceName.orEmpty(),
+            billName = dashboard?.bills?.firstOrNull { it.deviceId == id }?.deviceName.orEmpty(),
+            cachedName = cachedDeviceNames[id].orEmpty(),
+            customName = customDeviceNames[id].orEmpty()
+        )
+        message = if (known != null || resolvedName.isNotBlank()) {
+            "已扫码：$displayName，现在可以启动"
+        } else {
+            "已添加 $displayName，正在同步设备名称与状态…"
+        }
+        // 扫码后立刻用 more=true 拉一次设备状态，把服务端真实设备名取回来。
+        viewModelScope.launch {
+            repository.fetchDeviceStatus(id, more = true).onSuccess { status ->
+                statusById = statusById + (id to status)
+                if (status.deviceName.isNotBlank()) {
+                    cachedDeviceNames = preferences.saveHuiLifeDeviceName(id, status.deviceName)
+                    val updatedName = resolveDisplayName(
+                        id = id,
+                        serverName = known?.name.orEmpty(),
+                        statusName = status.deviceName,
+                        billName = dashboard?.bills?.firstOrNull { it.deviceId == id }?.deviceName.orEmpty(),
+                        cachedName = cachedDeviceNames[id].orEmpty(),
+                        customName = customDeviceNames[id].orEmpty()
+                    )
+                    message = "已扫码：$updatedName（${status.label}）"
+                }
+            }
+            refreshStatuses()
+        }
+    }
+
+    fun openRename(device: HuiLifeDevice) {
+        renameTarget = device
+    }
+
+    fun dismissRename() {
+        renameTarget = null
+    }
+
+    fun saveCustomName(deviceId: String, name: String) {
+        customDeviceNames = preferences.saveHuiLifeCustomDeviceName(deviceId, name)
+        renameTarget = null
+        message = if (name.trim().isBlank()) {
+            "已恢复默认设备名称"
+        } else {
+            "已备注为「${name.trim()}」"
+        }
     }
 
     fun removeScannedDevice(device: HuiLifeDevice) {
@@ -343,6 +504,41 @@ class HuiLifeViewModel(
     }
 
     companion object {
+        internal fun isGenericPlaceholderName(text: String): Boolean {
+            val cleaned = text.trim()
+            return cleaned.isBlank() ||
+                cleaned == "未命名设备" ||
+                cleaned == "扫码设备" ||
+                cleaned == "新注册设备"
+        }
+
+        internal fun resolveDisplayName(
+            id: String,
+            serverName: String = "",
+            statusName: String = "",
+            billName: String = "",
+            cachedName: String = "",
+            customName: String = ""
+        ): String {
+            fun valid(text: String): String? =
+                text.trim().takeIf { !isGenericPlaceholderName(it) }
+            val specific = valid(customName)
+                ?: valid(serverName)
+                ?: valid(statusName)
+                ?: valid(billName)
+                ?: valid(cachedName)
+            if (specific != null) return specific
+            val hasNewReg = listOf(serverName, statusName, cachedName)
+                .any { it.trim() == "新注册设备" }
+            val prefix = if (hasNewReg) "未命名设备" else "扫码设备"
+            return "$prefix · ${shortDeviceSuffix(id)}"
+        }
+
+        internal fun shortDeviceSuffix(id: String): String {
+            val cleaned = id.trim()
+            return if (cleaned.length <= 6) cleaned else cleaned.takeLast(6)
+        }
+
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 HuiLifeViewModel(

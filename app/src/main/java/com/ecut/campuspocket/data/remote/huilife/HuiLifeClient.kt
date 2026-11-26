@@ -1,6 +1,7 @@
 package com.ecut.campuspocket.data.remote.huilife
 
 import android.util.Log
+import com.ecut.campuspocket.BuildConfig
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.ConfigurationRequiredException
 import com.google.gson.JsonArray
@@ -110,10 +111,6 @@ class HuiLifeClient(
             val json = getJson("/ui/app/master", platform, token)
             requireSuccess(json, "设备列表读取失败")
             val data = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
-            Log.d(
-                "HuiLifeApi",
-                "master dataKeys=${data?.keySet()?.joinToString(",")}"
-            )
             HuiLifeDiagnostics.lastMaster =
                 "dataKeys=${data?.keySet()?.joinToString(",") ?: "null"}"
             val favos = data?.get("favos")?.takeIf { it.isJsonArray }?.asJsonArray
@@ -126,23 +123,7 @@ class HuiLifeClient(
                 runCatching {
                     val item = element.takeIf { it.isJsonObject }?.asJsonObject
                         ?: return@runCatching null
-                    val id = item.string("id")
-                        .ifBlank { item.string("did") }
-                        .ifBlank { item.string("deviceId") }
-                        .ifBlank { item.string("devId") }
-                    if (id.isBlank()) return@runCatching null
-                    HuiLifeDevice(
-                        id = id,
-                        name = item.string("name")
-                            .ifBlank { item.string("devName") }
-                            .ifBlank { item.string("deviceName") }
-                            .ifBlank { "未命名设备" },
-                        detail = buildList {
-                            item.string("status").takeIf { it.isNotBlank() }?.let(::add)
-                            item.string("state").takeIf { it.isNotBlank() }?.let(::add)
-                            item.string("addr").takeIf { it.isNotBlank() }?.let(::add)
-                        }.joinToString(" · ")
-                    )
+                    parseDeviceObject(item, fallbackName = "未命名设备")
                 }.getOrNull()
             }
             HuiLifeDiagnostics.lastMaster += " parsed=${parsed.size}"
@@ -223,36 +204,101 @@ class HuiLifeClient(
         }
     }
 
-    /** 读取单台设备的实时状态（只读，10 秒轮询用）。 */
+    /** 读取单台设备的实时状态（只读，10 秒轮询用）；more=true 时附带更完整的设备名称/位置。 */
     suspend fun fetchDeviceStatus(
         token: String,
         platform: HuiLifePlatform,
-        deviceId: String
+        deviceId: String,
+        more: Boolean = false
     ): Result<HuiLifeDeviceStatus> = withContext(Dispatchers.IO) {
         runCatching {
             val json = getJson(
-                "/ui/app/dev/status?did=${encode(deviceId)}&more=false",
+                "/ui/app/dev/status?did=${encode(deviceId)}&more=$more",
                 platform,
                 token
             )
             HuiLifeDiagnostics.lastDeviceStatus =
                 "code=${json.int("code")} msg=${json.string("msg")}"
             requireSuccess(json, "设备状态读取失败")
-            val device = json.get("data")
-                ?.takeIf { it.isJsonObject }?.asJsonObject
-                ?.get("device")?.takeIf { it.isJsonObject }?.asJsonObject
-                ?: throw IOException("设备状态缺少 device")
-            val gene = device.get("gene")?.takeIf { it.isJsonObject }?.asJsonObject
-            HuiLifeDeviceStatus(
-                deviceStatus = device.int("status"),
-                geneStatus = gene?.int("status") ?: 0,
-                endTimeMillis = timeToMillis(gene?.long("time") ?: 0L)
-            )
+            parseDeviceStatus(json)
         }
     }
 
-    /** 扫码得到的 qrId 通过 `/qr/use` 换成真实设备编号。 */
-    suspend fun resolveQrDevice(token: String, qrId: String): Result<String> =
+    /**
+     * 只读查询单台设备详情，用于扫码添加的未收藏设备补全真实名称与类型。
+     * 按常见只读接口依次尝试，全部不执行写入/收藏操作。
+     */
+    suspend fun fetchDeviceInfo(
+        token: String,
+        platform: HuiLifePlatform,
+        deviceId: String
+    ): Result<HuiLifeDevice?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val encodedId = encode(deviceId)
+            val paths = listOf(
+                "/dev/view?id=$encodedId",
+                "/dev/rela/view-stat?did=$encodedId",
+                "/dev/rela/view-stat?id=$encodedId",
+                "/ui/app/dev/detail?did=$encodedId",
+                "/ui/app/dev/detail?id=$encodedId",
+                "/dev/detail?id=$encodedId",
+                "/ui/app/dev/status?did=$encodedId&more=true"
+            )
+            for (path in paths) {
+                val json = runCatching { getJson(path, platform, token) }.getOrNull() ?: continue
+                val code = json.int("code")
+                val data = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
+                val dev = data?.get("device")?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?: data?.get("dev")?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?: data
+                val returnedId = dev?.string("id")
+                    ?.ifBlank { dev.string("did") }
+                    ?.ifBlank { data?.string("id").orEmpty() }
+                    .orEmpty()
+                val idMatches = returnedId.isBlank() || returnedId == deviceId
+                val epName = dev?.get("ep")?.takeIf { it.isJsonObject }?.asJsonObject?.string("name").orEmpty()
+                if (BuildConfig.DEBUG) {
+                    Log.d(
+                        "HuiLifeProbe",
+                        "path=${path.substringBefore('?')}?${path.substringAfter('?').substringBefore('=')} " +
+                            "suffix=${deviceId.takeLast(6)} code=$code idMatch=$idMatches " +
+                            "retIdTail=${returnedId.takeLast(6)} name=${dev?.string("name")} " +
+                            "ep=$epName keys=${dev?.keySet()?.joinToString(",")}"
+                    )
+                }
+                if (code == 0 && dev != null && idMatches) {
+                    val parsed = parseDeviceObject(dev)
+                    if (parsed != null && !isGenericDeviceName(parsed.name)) {
+                        val mergedDetail = parsed.detail.ifBlank {
+                            data?.let { extractDetail(it, excludeName = parsed.name) }.orEmpty()
+                        }
+                        val mergedType = parsed.typeCode.ifBlank {
+                            data?.let(::extractTypeCode).orEmpty()
+                        }
+                        return@runCatching parsed.copy(
+                            id = deviceId,
+                            detail = mergedDetail,
+                            typeCode = mergedType
+                        )
+                    }
+                    val topName = data?.let { extractName(it) }.orEmpty()
+                    if (!isGenericDeviceName(topName)) {
+                        return@runCatching HuiLifeDevice(
+                            id = deviceId,
+                            name = topName,
+                            detail = extractDetail(dev, excludeName = topName),
+                            typeCode = extractTypeCode(dev)
+                                .ifBlank { data?.let(::extractTypeCode).orEmpty() }
+                        )
+                    }
+                }
+            }
+            null
+        }
+    }
+
+    /** 扫码得到的 qrId 通过 `/qr/use` 换成真实设备编号及设备名称。 */
+    suspend fun resolveQrDevice(token: String, qrId: String): Result<HuiLifeDevice> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val json = getJson(
@@ -261,13 +307,7 @@ class HuiLifeClient(
                     token
                 )
                 requireSuccess(json, "二维码解析失败")
-                val deviceId = json.get("data")
-                    ?.takeIf { it.isJsonObject }?.asJsonObject
-                    ?.get("dev")?.takeIf { it.isJsonObject }?.asJsonObject
-                    ?.string("id")
-                    .orEmpty()
-                if (deviceId.isBlank()) throw IOException("二维码里没有设备编号")
-                deviceId
+                parseQrDevice(json)
             }
         }
 
@@ -476,6 +516,126 @@ class HuiLifeClient(
             val digest = MessageDigest.getInstance("MD5")
                 .digest("authCode=$smsCode&un=$phone$salt".toByteArray(Charsets.UTF_8))
             return digest.joinToString("") { "%02x".format(it) }
+        }
+
+        internal fun parseDeviceObject(
+            item: JsonObject,
+            fallbackName: String = ""
+        ): HuiLifeDevice? {
+            val id = item.str("id")
+                .ifBlank { item.str("did") }
+                .ifBlank { item.str("deviceId") }
+                .ifBlank { item.str("devId") }
+            if (id.isBlank()) return null
+            val name = extractName(item).ifBlank { fallbackName }
+            val detail = extractDetail(item, excludeName = name)
+            val typeCode = extractTypeCode(item)
+            return HuiLifeDevice(id = id, name = name, detail = detail, typeCode = typeCode)
+        }
+
+        internal fun parseDeviceStatus(json: JsonObject): HuiLifeDeviceStatus {
+            val data = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
+            val device = data?.get("device")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: data?.get("dev")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: throw IOException("设备状态缺少 device")
+            val gene = device.get("gene")?.takeIf { it.isJsonObject }?.asJsonObject
+            val name = extractName(device)
+                .ifBlank { data?.let(::extractName).orEmpty() }
+            val detail = extractDetail(device, excludeName = name)
+                .ifBlank { data?.let { extractDetail(it, excludeName = name) }.orEmpty() }
+            val typeCode = extractTypeCode(device)
+                .ifBlank { gene?.let(::extractTypeCode).orEmpty() }
+                .ifBlank { data?.let(::extractTypeCode).orEmpty() }
+            val rawTime = gene?.lng("time") ?: 0L
+            val endMillis = if (rawTime in 1L until 100_000_000_000L) rawTime * 1000L else rawTime
+            return HuiLifeDeviceStatus(
+                deviceStatus = device.intVal("status"),
+                geneStatus = gene?.intVal("status") ?: 0,
+                endTimeMillis = endMillis,
+                deviceName = name,
+                deviceDetail = detail,
+                deviceTypeCode = typeCode
+            )
+        }
+
+        internal fun parseQrDevice(json: JsonObject): HuiLifeDevice {
+            val data = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
+            val dev = data?.get("dev")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: data?.get("device")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: data
+            val parsed = dev?.let { parseDeviceObject(it) }
+                ?: throw IOException("二维码里没有设备编号")
+            val fallbackName = parsed.name.ifBlank { data?.let(::extractName).orEmpty() }
+            val fallbackDetail = parsed.detail.ifBlank {
+                data?.let { extractDetail(it, excludeName = fallbackName) }.orEmpty()
+            }
+            val fallbackType = parsed.typeCode.ifBlank { data?.let(::extractTypeCode).orEmpty() }
+            return parsed.copy(name = fallbackName, detail = fallbackDetail, typeCode = fallbackType)
+        }
+
+        private fun isGenericDeviceName(name: String): Boolean {
+            val cleaned = name.trim()
+            return cleaned.isBlank() ||
+                cleaned == "未命名设备" ||
+                cleaned == "扫码设备" ||
+                cleaned == "新注册设备"
+        }
+
+        private fun extractName(obj: JsonObject): String {
+            val direct = listOf(
+                "name", "devName", "deviceName", "dname", "devTitle", "deviceTitle",
+                "alias", "title", "lName", "nickName", "fullName"
+            ).firstNotNullOfOrNull { key -> obj.str(key).takeIf { it.isNotBlank() } }
+            if (!direct.isNullOrBlank() && !isGenericDeviceName(direct)) return direct
+            // 部分未命名主设备（如“新注册设备”）的真实名称在 subs 子设备里。
+            val subName = obj.get("subs")?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.firstNotNullOfOrNull { el ->
+                    val subObj = el.takeIf { it.isJsonObject }?.asJsonObject ?: return@firstNotNullOfOrNull null
+                    listOf("name", "dname", "devName", "alias", "title")
+                        .firstNotNullOfOrNull { key ->
+                            subObj.str(key).takeIf { !isGenericDeviceName(it) }
+                        }
+                }
+            if (!subName.isNullOrBlank()) return subName
+            if (!direct.isNullOrBlank()) return direct
+            val ep = obj.get("ep")?.takeIf { it.isJsonObject }?.asJsonObject
+            return ep?.str("name").orEmpty()
+        }
+
+        private fun extractTypeCode(obj: JsonObject): String {
+            return listOf("ltype", "devType", "btype", "dtype", "type", "category", "deviceType")
+                .firstNotNullOfOrNull { key -> obj.str(key).takeIf { it.isNotBlank() } }
+                .orEmpty()
+        }
+
+        private fun extractDetail(obj: JsonObject, excludeName: String): String {
+            val parts = linkedSetOf<String>()
+            listOf("addr", "address", "position", "location", "areaName", "floorName")
+                .forEach { key ->
+                    val value = obj.str(key)
+                    if (value.isNotBlank() && value != excludeName) parts += value
+                }
+            val epName = obj.get("ep")?.takeIf { it.isJsonObject }?.asJsonObject?.str("name").orEmpty()
+            if (epName.isNotBlank() && epName != excludeName) parts += epName
+            return parts.joinToString(" · ")
+        }
+
+        private fun JsonObject.str(key: String): String {
+            val value = get(key) ?: return ""
+            if (value.isJsonNull || !value.isJsonPrimitive) return ""
+            return runCatching { value.asString.trim() }.getOrDefault("")
+        }
+
+        private fun JsonObject.intVal(key: String): Int {
+            val value = get(key) ?: return 0
+            if (value.isJsonNull) return 0
+            return runCatching { value.asInt }.getOrDefault(0)
+        }
+
+        private fun JsonObject.lng(key: String): Long {
+            val value = get(key) ?: return 0L
+            if (value.isJsonNull || !value.isJsonPrimitive) return 0L
+            return runCatching { value.asLong }.getOrDefault(0L)
         }
     }
 }

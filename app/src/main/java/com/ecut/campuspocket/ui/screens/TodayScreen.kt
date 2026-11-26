@@ -199,6 +199,9 @@ fun TodayScreen(
         campusCardViewModel.ensureFresh()
         chaoxingViewModel.refresh()
         huiLifeViewModel.refresh()
+        if (electricityConfigured) {
+            electricityViewModel.ensureFresh()
+        }
     }
 
     val dayByEpoch = remember(electricityDays) {

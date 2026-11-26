@@ -36,20 +36,29 @@ class XgwxElectricityClient(
     private val client: OkHttpClient,
     private val baseUrl: String = CampusEndpoints.ELECTRICITY_H5_BASE,
     private val ssoManager: CasSsoManager? = null,
-    private val operatorPwdProvider: () -> String
+    private val operatorPwdProvider: () -> String,
+    private val clearSessionCookies: (suspend () -> Unit)? = null,
+    private val onSessionRecovery: (suspend () -> Boolean)? = null
 ) {
 
     suspend fun fetchSnapshot(): XgwxSnapshot = withContext(Dispatchers.IO) {
         val indexUrl = indexUrl()
-        val userId = loadIndexUserId(indexUrl)
-        val houseJson = postForm(
-            path = "/app/app/api/user/searchBindHouseListForMoney",
-            body = FormBody.Builder().add("userid", userId).build(),
-            referer = indexUrl
-        )
+        var userId = loadIndexUserId(indexUrl)
+        val houseJson = try {
+            fetchBindHouses(userId, indexUrl)
+        } catch (expired: SessionExpiredException) {
+            // 首页里读到旧缓存/半过期状态时，清掉损坏的 xgwx Cookie 并换票重试一次。
+            if (!renewElectricitySession(indexUrl)) throw expired
+            userId = loadIndexUserId(indexUrl, allowRecovery = false)
+            fetchBindHouses(userId, indexUrl)
+        }
         val root = parseObject(houseJson)
         if (root.string("ret") != "1") {
-            throw IOException(root.string("msg").ifBlank { "宿舍绑定信息读取失败" })
+            val msg = root.string("msg").ifBlank { "宿舍绑定信息读取失败" }
+            if (looksLikeSessionError(msg)) {
+                throw SessionExpiredException("宿舍缴费会话已失效：$msg")
+            }
+            throw IOException(msg)
         }
         val houses = root.getAsJsonArray("data") ?: JsonArray()
         val selection = selectMeter(houses)
@@ -73,21 +82,65 @@ class XgwxElectricityClient(
         )
     }
 
+    private fun fetchBindHouses(userId: String, referer: String): String =
+        postForm(
+            path = "/app/app/api/user/searchBindHouseListForMoney",
+            body = FormBody.Builder().add("userid", userId).build(),
+            referer = referer
+        )
+
     /**
      * 读取宿舍缴费首页里的 userid。
      *
-     * 会话过期时页面会 302 到 CAS 登录页，拿不到 userid。
-     * 此时用本机保存的 CASTGC 静默换票，再重试一次，用户不需要重新登录。
+     * 旧 xgwx Cookie 失效或损坏时，页面可能 302 到 CAS，或直接返回 HTTP 500/401/403。
+     * 此时先清掉 xgwx 旧会话，再用 CASTGC 静默换票（必要时触发自动登录）并重试。
      */
-    private suspend fun loadIndexUserId(indexUrl: String): String {
-        val first = get(indexUrl)
-        extractUserId(first)?.let { return it }
+    private suspend fun loadIndexUserId(
+        indexUrl: String,
+        allowRecovery: Boolean = true
+    ): String {
+        var lastError: IOException? = null
+        val first = runCatching { get(indexUrl) }.onFailure {
+            if (it is IOException) lastError = it
+        }.getOrNull()
+        first?.let(::extractUserId)?.let { return it }
 
-        if (ssoManager?.ensureServiceSession(indexUrl) == true) {
-            val second = get(indexUrl)
-            extractUserId(second)?.let { return it }
+        if (!allowRecovery) {
+            throw SessionExpiredException("统一认证已过期，请重新登录")
         }
-        throw SessionExpiredException("统一认证已过期，请重新登录")
+
+        if (renewElectricitySession(indexUrl)) {
+            val second = runCatching { get(indexUrl) }.onFailure {
+                if (it is IOException) lastError = it
+            }.getOrNull()
+            second?.let(::extractUserId)?.let { return it }
+        }
+        if (lastError != null && lastError !is SessionExpiredException &&
+            !isRecoverableHttpError(lastError!!)
+        ) {
+            throw lastError!!
+        }
+        throw SessionExpiredException("统一认证或宿舍缴费会话已过期，请重新登录")
+    }
+
+    private suspend fun renewElectricitySession(indexUrl: String): Boolean {
+        runCatching { clearSessionCookies?.invoke() }
+        if (ssoManager?.ensureServiceSession(indexUrl) == true) {
+            return true
+        }
+        if (onSessionRecovery?.invoke() == true) {
+            runCatching { clearSessionCookies?.invoke() }
+            if (ssoManager?.ensureServiceSession(indexUrl) == true) {
+                return true
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun isRecoverableHttpError(error: IOException): Boolean {
+        val msg = error.message.orEmpty()
+        return msg.contains("401") || msg.contains("403") || msg.contains("500") || msg.contains("502")
     }
 
     private fun indexUrl(): String {
@@ -100,19 +153,28 @@ class XgwxElectricityClient(
         return CampusEndpoints.electricityIndexUrl(operatorPwd)
     }
 
-    private fun extractUserId(html: String): String? =
-        Regex("""userid=(\d+)""").find(html)?.groupValues?.get(1)
-
     private fun selectMeter(houses: JsonArray): MeterSelection? {
+        val candidates = mutableListOf<Pair<Int, MeterSelection>>()
         houses.forEach { houseElement ->
-            val house = houseElement.asJsonObject
-            val meters = house.getAsJsonArray("meter") ?: JsonArray()
+            val house = houseElement.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val meters = house.get("meter")?.takeIf { it.isJsonArray }?.asJsonArray ?: JsonArray()
             meters.forEach { meterElement ->
-                val meter = meterElement.asJsonObject
+                val meter = meterElement.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
                 val meterId = meter.string("meter_id")
                 val houseId = house.string("house_id")
                 if (meterId.isNotBlank() && houseId.isNotBlank()) {
-                    return MeterSelection(
+                    val balance = meter.doubleOrNull("meter_balance")
+                    val typeHint = listOf(
+                        meter.string("meter_type"),
+                        meter.string("meter_name"),
+                        meter.string("meter_no"),
+                        meter.string("remark")
+                    ).joinToString(" ")
+                    var score = 0
+                    if (typeHint.contains("电") || typeHint.contains("elec", ignoreCase = true)) score += 10
+                    if (typeHint.contains("水") || typeHint.contains("water", ignoreCase = true)) score -= 5
+                    if (balance != null) score += 2
+                    candidates += score to MeterSelection(
                         houseId = houseId,
                         meterId = meterId,
                         houseLabel = house.string("house_no").ifBlank {
@@ -121,19 +183,19 @@ class XgwxElectricityClient(
                         houseAddress = meter.string("house_addr").ifBlank {
                             house.string("house_addr")
                         },
-                        balance = meter.doubleOrNull("meter_balance")
+                        balance = balance
                     )
                 }
             }
         }
-        return null
+        return candidates.maxByOrNull { it.first }?.second
     }
 
     /**
-     * 按 7 天分块查询最近 30 天；接口若拒绝范围查询，则对这一块逐日兜底。
+     * 按 7 天分块查询最近 30 天，并对缺失日期逐日补查。
      *
-     * 学校接口对超出保留期/未结算的日期会返回空 list 或 0，
-     * 这些日期不能当成“用了 0 度”，否则图表会出现整段 0.0。
+     * 注意：xgwx 服务端对 startTime / endTime 按字符串比较，必须用补零的 `yyyy-MM-dd`
+     * （如 `2026-11-01`），否则每月 1~9 号会因缺少前导零而查不出数据。
      */
     private fun queryDosageChunked(
         houseId: String,
@@ -141,35 +203,55 @@ class XgwxElectricityClient(
         start: LocalDate,
         end: LocalDate
     ): List<Pair<LocalDate, Double>> {
-        val formatter = DateTimeFormatter.ofPattern("yyyy-M-d")
-        val result = mutableListOf<Pair<LocalDate, Double>>()
+        val merged = java.util.TreeMap<LocalDate, Double>()
         var cursor = start
         while (!cursor.isAfter(end)) {
             val chunkEnd = if (cursor.plusDays(6).isAfter(end)) end else cursor.plusDays(6)
-            var part = queryDosageRange(houseId, meterId, cursor, chunkEnd)
-            if (part.isEmpty()) {
-                val days = ChronoUnit.DAYS.between(cursor, chunkEnd).toInt()
-                part = (0..days).mapNotNull { offset ->
-                    val date = cursor.plusDays(offset.toLong())
-                    val value = runCatching {
-                        queryDosage(
-                            houseId = houseId,
-                            meterId = meterId,
-                            start = date.format(formatter),
-                            end = date.format(formatter)
-                        )
-                    }.getOrNull() ?: return@mapNotNull null
-                    date to value
-                }
+            val part = try {
+                queryDosageRange(houseId, meterId, cursor, chunkEnd)
+            } catch (expired: SessionExpiredException) {
+                throw expired
+            } catch (_: IOException) {
+                emptyList()
             }
-            result += part
+            part.forEach { (date, usage) -> merged[date] = usage }
             cursor = chunkEnd.plusDays(1)
         }
-        return result
+
+        // 对范围查询未返回的中间空洞及近期缺失日期逐日补查（单日失败重试 1 次）。
+        val yesterday = end.minusDays(1)
+        val missingDates = computeMissingDates(
+            foundDates = merged.keys,
+            windowStart = start,
+            yesterday = yesterday,
+            recentDays = 15
+        )
+        missingDates.forEach { date ->
+            val dateText = formatQueryDate(date)
+            var value: Double? = null
+            for (attempt in 0..1) {
+                val result = runCatching {
+                    queryDosage(
+                        houseId = houseId,
+                        meterId = meterId,
+                        start = dateText,
+                        end = dateText
+                    )
+                }
+                val error = result.exceptionOrNull()
+                if (error is SessionExpiredException) throw error
+                value = result.getOrNull()
+                if (value != null || error == null) break
+            }
+            if (value != null && value > 0.0) {
+                merged[date] = value
+            }
+        }
+        return merged.entries.map { it.key to it.value }
     }
 
     /**
-     * 按日期范围查询每日用量。data.list[].data_date 为 yyyyMMdd。
+     * 按日期范围查询每日用量。
      *
      * 只接受真正有读数的日期；0 度视为“接口未返回数据”。
      */
@@ -179,32 +261,18 @@ class XgwxElectricityClient(
         start: LocalDate,
         end: LocalDate
     ): List<Pair<LocalDate, Double>> {
-        val formatter = DateTimeFormatter.ofPattern("yyyy-M-d")
         val body = FormBody.Builder()
             .add("houseId", houseId)
             .add("meterId", meterId)
-            .add("startTime", start.format(formatter))
-            .add("endTime", end.format(formatter))
+            .add("startTime", formatQueryDate(start))
+            .add("endTime", formatQueryDate(end))
             .build()
         val json = postForm(
             path = "/app/app/api/data/dosage",
             body = body,
             referer = "$baseUrl/app/wechat/houseMeterSurplus.jsp"
         )
-        val root = parseObject(json)
-        if (root.string("ret") != "1") return emptyList()
-        val data = root.get("data")?.takeIf { !it.isJsonNull }?.asJsonObject ?: return emptyList()
-        val list = data.getAsJsonArray("list") ?: return emptyList()
-        return list.mapNotNull { element ->
-            val item = element.asJsonObject
-            val dateText = item.string("data_date")
-            val date = runCatching {
-                LocalDate.parse(dateText, DateTimeFormatter.BASIC_ISO_DATE)
-            }.getOrNull() ?: return@mapNotNull null
-            val usage = item.doubleOrNull("energy_used") ?: return@mapNotNull null
-            if (usage <= 0.0) return@mapNotNull null
-            date to usage
-        }
+        return parseDosageRangeJson(json)
     }
 
     /** 单日查询；没有有效读数时返回 null，而不是伪造 0 度。 */
@@ -226,21 +294,31 @@ class XgwxElectricityClient(
             referer = "$baseUrl/app/wechat/houseMeterSurplus.jsp"
         )
         val root = parseObject(json)
-        if (root.string("ret") != "1") return null
+        if (root.string("ret") != "1") {
+            val msg = root.string("msg")
+            if (looksLikeSessionError(msg)) {
+                throw SessionExpiredException("宿舍缴费会话已失效：$msg")
+            }
+            return null
+        }
         val data = root.get("data")
         if (data == null || data.isJsonNull) return null
         if (data.isJsonObject) {
             val objectData = data.asJsonObject
-            val list = objectData.getAsJsonArray("list")
+            val list = objectData.get("list")?.takeIf { it.isJsonArray }?.asJsonArray
             val listTotal = list?.sumOf { item ->
                 runCatching {
-                    item.asJsonObject.get("energy_used")?.asDouble ?: 0.0
+                    val obj = item.asJsonObject
+                    obj.doubleOrNull("energy_used")
+                        ?: obj.doubleOrNull("energyUsed")
+                        ?: obj.doubleOrNull("dosage")
+                        ?: 0.0
                 }.getOrDefault(0.0)
             } ?: 0.0
             if (listTotal > 0.0) return listTotal
             val total = objectData.get("totle") ?: objectData.get("total")
             val totalValue = total
-                ?.takeIf { !it.isJsonNull }
+                ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
                 ?.let { runCatching { it.asDouble }.getOrNull() }
             return totalValue?.takeIf { it > 0.0 }
         }
@@ -255,6 +333,9 @@ class XgwxElectricityClient(
             .get()
             .build()
         client.newCall(request).execute().use { response ->
+            if (response.code == 401 || response.code == 403) {
+                throw SessionExpiredException("宿舍缴费返回 ${response.code}")
+            }
             if (!response.isSuccessful) {
                 throw IOException("宿舍缴费系统返回 ${response.code}")
             }
@@ -273,6 +354,9 @@ class XgwxElectricityClient(
             .header("Referer", referer)
             .build()
         client.newCall(request).execute().use { response ->
+            if (response.code == 401 || response.code == 403) {
+                throw SessionExpiredException("宿舍缴费会话已失效（HTTP ${response.code}）")
+            }
             if (!response.isSuccessful) {
                 throw IOException("宿舍缴费系统返回 ${response.code}")
             }
@@ -295,13 +379,16 @@ class XgwxElectricityClient(
 
     private fun JsonObject.string(key: String): String {
         val value = get(key) ?: return ""
-        return if (value.isJsonNull) "" else value.asString
+        if (value.isJsonNull || !value.isJsonPrimitive) return ""
+        return runCatching { value.asString }.getOrDefault("")
     }
 
     private fun JsonObject.doubleOrNull(key: String): Double? {
         val value: JsonElement = get(key) ?: return null
-        if (value.isJsonNull) return null
-        return value.asString.toDoubleOrNull()
+        if (value.isJsonNull || !value.isJsonPrimitive) return null
+        return runCatching { value.asDouble }.getOrElse {
+            value.asString.toDoubleOrNull()
+        }
     }
 
     private data class MeterSelection(
@@ -311,4 +398,105 @@ class XgwxElectricityClient(
         val houseAddress: String,
         val balance: Double?
     )
+
+    companion object {
+        /** xgwx 接口要求补零日期 yyyy-MM-dd，否则每月 1~9 号会返回空。 */
+        internal fun formatQueryDate(date: LocalDate): String =
+            date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+        internal fun extractUserId(html: String): String? {
+            val patterns = listOf(
+                Regex("""userid\s*=\s*['"]?([A-Za-z0-9_-]{4,32})""", RegexOption.IGNORE_CASE),
+                Regex(""""userid"\s*:\s*"([A-Za-z0-9_-]{4,32})"""", RegexOption.IGNORE_CASE)
+            )
+            return patterns.firstNotNullOfOrNull { regex ->
+                regex.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+            }
+        }
+
+        internal fun looksLikeSessionError(msg: String): Boolean {
+            if (msg.isBlank()) return false
+            return listOf("登录", "失效", "过期", "超时", "认证", "session", "login")
+                .any { msg.contains(it, ignoreCase = true) }
+        }
+
+        internal fun parseDosageDate(raw: String): LocalDate? {
+            val cleaned = raw.trim()
+            if (cleaned.isBlank()) return null
+            val datePart = cleaned.substringBefore(' ').substringBefore('T')
+            val digitsOnly = datePart.filter(Char::isDigit)
+            if (digitsOnly.length == 8 && datePart.length == 8) {
+                return runCatching {
+                    LocalDate.parse(datePart, DateTimeFormatter.BASIC_ISO_DATE)
+                }.getOrNull()
+            }
+            val normalized = datePart.replace('/', '-')
+            return runCatching {
+                LocalDate.parse(normalized, DateTimeFormatter.ofPattern("yyyy-M-d"))
+            }.getOrNull() ?: runCatching {
+                LocalDate.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE)
+            }.getOrNull()
+        }
+
+        internal fun parseDosageRangeJson(json: String): List<Pair<LocalDate, Double>> {
+            val root = runCatching { JsonParser.parseString(json).asJsonObject }.getOrNull()
+                ?: return emptyList()
+            if (root.get("ret")?.takeIf { it.isJsonPrimitive }?.asString != "1") {
+                val msg = root.get("msg")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                if (looksLikeSessionError(msg)) {
+                    throw SessionExpiredException("宿舍缴费会话已失效：$msg")
+                }
+                return emptyList()
+            }
+            val data = root.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: return emptyList()
+            val list = data.get("list")?.takeIf { it.isJsonArray }?.asJsonArray
+                ?: return emptyList()
+            return list.mapNotNull { element ->
+                val item = element.takeIf { it.isJsonObject }?.asJsonObject
+                    ?: return@mapNotNull null
+                val dateText = listOf("data_date", "dataDate", "date")
+                    .firstNotNullOfOrNull { key ->
+                        item.get(key)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
+                    }.orEmpty()
+                val date = parseDosageDate(dateText) ?: return@mapNotNull null
+                val usage = listOf("energy_used", "energyUsed", "dosage", "usage")
+                    .firstNotNullOfOrNull { key ->
+                        item.get(key)?.takeIf { it.isJsonPrimitive }?.let { prim ->
+                            runCatching { prim.asDouble }.getOrElse { prim.asString.toDoubleOrNull() }
+                        }
+                    } ?: return@mapNotNull null
+                if (usage <= 0.0) return@mapNotNull null
+                date to usage
+            }
+        }
+
+        /**
+         * 计算需要逐日补查的缺失日期：
+         * - 覆盖 [min(已有最早日, 近 recentDays 起点) .. yesterday] 中未返回的全部日期。
+         */
+        internal fun computeMissingDates(
+            foundDates: Set<LocalDate>,
+            windowStart: LocalDate,
+            yesterday: LocalDate,
+            recentDays: Int = 15
+        ): List<LocalDate> {
+            if (yesterday.isBefore(windowStart)) return emptyList()
+            val recentStart = yesterday.minusDays((recentDays - 1).coerceAtLeast(0).toLong())
+                .let { if (it.isBefore(windowStart)) windowStart else it }
+            val earliestFound = foundDates.minOrNull()
+            val checkStart = when {
+                earliestFound == null -> recentStart
+                earliestFound.isBefore(recentStart) -> maxOf(earliestFound, windowStart)
+                else -> recentStart
+            }
+            val missing = mutableListOf<LocalDate>()
+            var cursor = checkStart
+            while (!cursor.isAfter(yesterday)) {
+                if (cursor !in foundDates) missing += cursor
+                cursor = cursor.plusDays(1)
+            }
+            return missing
+        }
+    }
 }

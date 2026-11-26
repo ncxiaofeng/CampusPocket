@@ -46,6 +46,9 @@ interface CookieDao {
     @Query("DELETE FROM cookies WHERE domain = :domain AND name IN (:names)")
     suspend fun deleteForHostAndNames(domain: String, names: List<String>)
 
+    @Query("DELETE FROM cookies WHERE domain = :domain AND name = :name AND path = :path")
+    suspend fun deleteCookie(domain: String, name: String, path: String)
+
     @Query("DELETE FROM cookies")
     suspend fun clear()
 }

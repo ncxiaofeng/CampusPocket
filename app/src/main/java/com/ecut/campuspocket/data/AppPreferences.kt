@@ -80,6 +80,80 @@ class AppPreferences(context: Context) {
         return current
     }
 
+    /** 服务端解析出的 798 设备真实名称缓存（deviceId -> name）。 */
+    val huiLifeDeviceNames: Map<String, String>
+        get() = readStringMap(KEY_HUILIFE_DEVICE_NAMES)
+
+    @Synchronized
+    fun saveHuiLifeDeviceName(deviceId: String, name: String): Map<String, String> {
+        val cleaned = name.trim()
+        if (deviceId.isBlank() || cleaned.isBlank()) return huiLifeDeviceNames
+        val current = huiLifeDeviceNames.toMutableMap()
+        if (current[deviceId] != cleaned) {
+            current[deviceId] = cleaned
+            writeStringMap(KEY_HUILIFE_DEVICE_NAMES, current)
+        }
+        return current
+    }
+
+    /** 服务端解析出的 798 设备位置/区域副标题缓存（deviceId -> detail）。 */
+    val huiLifeDeviceDetails: Map<String, String>
+        get() = readStringMap(KEY_HUILIFE_DEVICE_DETAILS)
+
+    @Synchronized
+    fun saveHuiLifeDeviceDetail(deviceId: String, detail: String): Map<String, String> {
+        val cleaned = detail.trim()
+        if (deviceId.isBlank() || cleaned.isBlank()) return huiLifeDeviceDetails
+        val current = huiLifeDeviceDetails.toMutableMap()
+        if (current[deviceId] != cleaned) {
+            current[deviceId] = cleaned
+            writeStringMap(KEY_HUILIFE_DEVICE_DETAILS, current)
+        }
+        return current
+    }
+
+    /** 用户手动为 798 设备设置的备注名称（优先于服务端名称展示）。 */
+    val huiLifeCustomDeviceNames: Map<String, String>
+        get() = readStringMap(KEY_HUILIFE_CUSTOM_NAMES)
+
+    @Synchronized
+    fun saveHuiLifeCustomDeviceName(deviceId: String, name: String): Map<String, String> {
+        if (deviceId.isBlank()) return huiLifeCustomDeviceNames
+        val current = huiLifeCustomDeviceNames.toMutableMap()
+        val cleaned = name.trim()
+        if (cleaned.isBlank()) {
+            current.remove(deviceId)
+        } else {
+            current[deviceId] = cleaned
+        }
+        writeStringMap(KEY_HUILIFE_CUSTOM_NAMES, current)
+        return current
+    }
+
+    private fun readStringMap(key: String): Map<String, String> {
+        val raw = prefs.getString(key, null).orEmpty()
+        if (raw.isBlank()) return emptyMap()
+        return runCatching {
+            val json = org.json.JSONObject(raw)
+            buildMap {
+                val keys = json.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val v = json.optString(k, "").trim()
+                    if (k.isNotBlank() && v.isNotBlank()) put(k, v)
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun writeStringMap(key: String, map: Map<String, String>) {
+        val json = org.json.JSONObject()
+        map.forEach { (k, v) ->
+            if (k.isNotBlank() && v.isNotBlank()) json.put(k, v)
+        }
+        prefs.edit().putString(key, json.toString()).apply()
+    }
+
     /** 上次完整拉取作业/考试的时间，避免每 15 分钟都请求全部课程。 */
     var chaoxingTasksFetchedAt: Long
         get() = prefs.getLong(KEY_CHAOXING_TASKS_AT, 0L)
@@ -124,6 +198,9 @@ class AppPreferences(context: Context) {
         private const val KEY_WEATHER_LOCATION = "weather_location"
         private const val KEY_HUILIFE_PHONE = "huilife_phone"
         private const val KEY_HUILIFE_SCANNED = "huilife_scanned_devices"
+        private const val KEY_HUILIFE_DEVICE_NAMES = "huilife_device_names"
+        private const val KEY_HUILIFE_DEVICE_DETAILS = "huilife_device_details"
+        private const val KEY_HUILIFE_CUSTOM_NAMES = "huilife_custom_device_names"
         private const val KEY_NOTIFIED_PREFIX = "notified_"
     }
 }

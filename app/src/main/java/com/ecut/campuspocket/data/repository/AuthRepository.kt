@@ -163,6 +163,37 @@ class AuthRepository(
     suspend fun loadCookiesForHost(host: String): List<CookieEntity> =
         cookieDao.getForHost(host)
 
+    /** 清理指定域名的旧 Cookie（用于重登或换票前清除损坏/错节点的旧会话）。 */
+    suspend fun clearCookiesForHost(host: String) {
+        if (host.isBlank()) return
+        cookieDao.deleteForDomain(host)
+    }
+
+    /**
+     * 保存后台自动登录获取的零信任门户会话，并同步镜像 CASTGC 到主凭据。
+     */
+    suspend fun savePortalSession(
+        casHost: String,
+        casCookieHeader: String,
+        portalHost: String,
+        portalCookieHeader: String
+    ) {
+        val now = System.currentTimeMillis()
+        val credentialCookie = portalCookieHeader.ifBlank { casCookieHeader }
+        if (credentialCookie.isBlank()) return
+        authDao.upsert(
+            AuthCredentialEntity(
+                systemId = CampusEndpoints.SYSTEM_CAS,
+                domain = casHost,
+                cookie = credentialCookie,
+                updatedAt = now
+            )
+        )
+        if (casCookieHeader.isNotBlank()) {
+            saveCasMasterCookies(casCookieHeader, fromCasHost = false)
+        }
+    }
+
     suspend fun clearSystem(systemId: String, hosts: Collection<String>) {
         authDao.delete(systemId)
         hosts.forEach { cookieDao.deleteForDomain(it) }

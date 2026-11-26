@@ -46,7 +46,8 @@ data class CampusCardBillPage(
 class CampusCardClient(
     private val client: OkHttpClient,
     private val baseUrl: String = CampusEndpoints.EHALL_BASE_URL,
-    private val ssoManager: CasSsoManager? = null
+    private val ssoManager: CasSsoManager? = null,
+    private val sessionRecovery: (suspend () -> Boolean)? = null
 ) {
 
     suspend fun fetchOverview(): CampusCardOverview = withContext(Dispatchers.IO) {
@@ -111,8 +112,16 @@ class CampusCardClient(
     private suspend fun postData(path: String, payload: String): JsonObject {
         var response = postDataRaw(path, payload)
         if (response.sessionExpired) {
-            val renewed = ssoManager
+            var renewed = ssoManager
                 ?.ensureServiceSession(CampusEndpoints.EHALL_CARD_SERVICE_URL) == true
+            val recovery = sessionRecovery
+            if (!renewed && recovery != null) {
+                val recovered = runCatching { recovery.invoke() }.getOrDefault(false)
+                if (recovered) {
+                    renewed = ssoManager
+                        ?.ensureServiceSession(CampusEndpoints.EHALL_CARD_SERVICE_URL) == true
+                }
+            }
             if (!renewed) {
                 throw SessionExpiredException("统一认证已过期，请重新登录")
             }

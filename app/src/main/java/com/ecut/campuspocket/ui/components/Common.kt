@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.automirrored.outlined.DirectionsRun
 import androidx.compose.material.icons.automirrored.outlined.EventNote
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.Bolt
@@ -29,9 +31,12 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.Chair
 import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.HowToReg
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LocalLaundryService
 import androidx.compose.material.icons.outlined.LocalLibrary
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Shield
@@ -180,7 +185,14 @@ private fun serviceIcon(text: String): ImageVector = when (text) {
     "同" -> Icons.Outlined.Sync
     "跑" -> Icons.AutoMirrored.Outlined.DirectionsRun
     "隐" -> Icons.Outlined.PrivacyTip
-    "余" -> Icons.Outlined.AccountBalanceWallet
+    "余", "钱" -> Icons.Outlined.AccountBalanceWallet
+    "账" -> Icons.Outlined.AccountCircle
+    "锁" -> Icons.Outlined.Lock
+    "学", "习" -> Icons.Outlined.School
+    "铃" -> Icons.Outlined.NotificationsActive
+    "签" -> Icons.Outlined.HowToReg
+    "作" -> Icons.AutoMirrored.Outlined.Assignment
+    "注" -> Icons.Outlined.Info
     "更" -> Icons.Outlined.SystemUpdateAlt
     "座" -> Icons.Outlined.Chair
     "关" -> Icons.Outlined.Info
