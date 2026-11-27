@@ -18,3 +18,14 @@ _capture/
 _lspatch/
 _mitm/
 *.apk
+*.ipa
+ios_flutter/.dart_tool/
+ios_flutter/.flutter-plugins-dependencies
+ios_flutter/build/
+ios_flutter/ios/Pods/
+ios_flutter/ios/.symlinks/
+ios_flutter/ios/Flutter/ephemeral/
+ios_flutter/ios/Flutter/Flutter.podspec
+ios_flutter/ios/Flutter/Generated.xcconfig
+ios_flutter/ios/Flutter/flutter_export_environment.sh
+ios_flutter/ios/Runner/GeneratedPluginRegistrant.*

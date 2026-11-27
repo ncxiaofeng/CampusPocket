@@ -1,0 +1,38 @@
+{
+  "name": "冻小梨 iOS 自签源",
+  "subtitle": "东华理工大学纯本地校园聚合 App（未越狱免费自签）",
+  "description": "面向东华理工大学（ECUT）学生的纯本地校园服务 App，零付费开发者权限，支持 SideStore / AltStore 免费 Apple ID 自签与续签。",
+  "iconURL": "https://raw.githubusercontent.com/ncxiaofeng/CampusPocket/main/ios_flutter/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+  "website": "https://github.com/ncxiaofeng/CampusPocket",
+  "tintColor": "#10B981",
+  "apps": [
+    {
+      "name": "冻小梨",
+      "bundleIdentifier": "com.ecut.campuspocket",
+      "developerName": "ncxiaofeng",
+      "subtitle": "课表 · 成绩 · 考试 · 空教室 · 校园卡 · 图书馆",
+      "localizedDescription": "东华理工大学校园服务聚合 App（iOS 未越狱免费自签版）。纯本地无后端，凭据仅保存于本机 Keychain，支持校园网直连与校外 WebVPN 代理同步。",
+      "iconURL": "https://raw.githubusercontent.com/ncxiaofeng/CampusPocket/main/ios_flutter/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+      "tintColor": "#10B981",
+      "category": "utilities",
+      "versions": [
+        {
+          "version": "0.6.4",
+          "date": "2026-11-27",
+          "localizedDescription": "冻小梨 iOS 自签首版：统一身份认证单点登录、校外 WebVPN 代理、首页天气、课表、成绩、考试、空闲教室、通知公告、校园卡与图书馆空位。",
+          "downloadURL": "https://github.com/ncxiaofeng/CampusPocket/releases/download/ios-v0.6.4/CampusPocket-iOS-0.6.4-unsigned.ipa",
+          "size": 0,
+          "minOSVersion": "15.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocalNetworkUsageDescription": "用于在校园网环境下直连学校内网教务系统（172.20.130.13）。",
+          "NSLocationWhenInUseUsageDescription": "仅用于获取当前位置坐标以查询校园逐小时天气预报。"
+        }
+      }
+    }
+  ],
+  "news": []
+}

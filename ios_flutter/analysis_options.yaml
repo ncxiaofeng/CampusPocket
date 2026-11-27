@@ -1,0 +1,6 @@
+# 只保留最基础的 analyzer 配置；项目不引入额外 lint 包。
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**

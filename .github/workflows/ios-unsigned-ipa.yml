@@ -1,0 +1,120 @@
+name: Build iOS Unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: '可选：覆盖构建版本号（留空则读取 pubspec.yaml）'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'ios-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios-unsigned:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ios_flutter
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Fetch dependencies
+        run: flutter pub get
+
+      - name: Static analysis and unit tests
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Resolve version
+        id: vars
+        run: |
+          PUB_VER=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          PUB_BUILD=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f2)
+          if [[ "${GITHUB_REF_NAME}" == ios-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#ios-v}"
+          elif [ -n "${{ github.event.inputs.version_name }}" ]; then
+            VERSION="${{ github.event.inputs.version_name }}"
+          else
+            VERSION="${PUB_VER}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_number=${PUB_BUILD:-1}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION} (${PUB_BUILD:-1})"
+
+      - name: Build unsigned iOS Runner.app (no Apple Developer account required)
+        run: |
+          flutter build ios --release --no-codesign \
+            --build-name="${{ steps.vars.outputs.version }}" \
+            --build-number="${{ steps.vars.outputs.build_number }}"
+
+      - name: Package standard unsigned .ipa
+        id: pkg
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          test -d "$APP_PATH"
+          test -f "$APP_PATH/Runner"
+          test -f "$APP_PATH/Info.plist"
+
+          OUT_DIR="../build_ios_out"
+          rm -rf "$OUT_DIR" Payload
+          mkdir -p "$OUT_DIR" Payload
+          cp -R "$APP_PATH" Payload/Runner.app
+          find Payload -name '.DS_Store' -delete
+
+          IPA_NAME="CampusPocket-iOS-${VERSION}-unsigned.ipa"
+          zip -qry "${OUT_DIR}/${IPA_NAME}" Payload
+          rm -rf Payload
+
+          cd "$OUT_DIR"
+          shasum -a 256 "${IPA_NAME}" > "${IPA_NAME}.sha256.txt"
+          IPA_SIZE=$(stat -f%z "${IPA_NAME}")
+          echo "ipa_name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ipa_size=${IPA_SIZE}" >> "$GITHUB_OUTPUT"
+          ls -lh "${IPA_NAME}"
+          cat "${IPA_NAME}.sha256.txt"
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CampusPocket-iOS-${{ steps.vars.outputs.version }}-unsigned
+          path: |
+            build_ios_out/*.ipa
+            build_ios_out/*.sha256.txt
+          retention-days: 30
+
+      - name: Publish GitHub Release (on ios-v* tag)
+        if: startsWith(github.ref, 'refs/tags/ios-v')
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          IPA="build_ios_out/${{ steps.pkg.outputs.ipa_name }}"
+          SHA="build_ios_out/${{ steps.pkg.outputs.ipa_name }}.sha256.txt"
+          {
+            echo "# 冻小梨 iOS 自签版 ${VERSION}"
+            echo ""
+            echo "专为**未越狱 iPhone** 构建的未签名 IPA，无需付费苹果开发者账号，使用个人免费 Apple ID 通过 **SideStore / Sideloadly / AltStore** 即可手动自签安装。"
+            echo ""
+            echo "- **安装包大小**：${{ steps.pkg.outputs.ipa_size }} bytes"
+            echo "- **自签与 7 天续签指南**：查看仓库内 [docs/IOS_SIDELOAD.md](https://github.com/ncxiaofeng/CampusPocket/blob/main/docs/IOS_SIDELOAD.md)"
+            echo "- **安全边界**：纯本地无后端，不含 Push / App Groups / Widget 扩展（只占免费 Apple ID 的 1 个 App 名额）。"
+          } > release_body.md
+
+          gh release create "${GITHUB_REF_NAME}" "$IPA" "$SHA" \
+            --title "冻小梨 iOS 自签版 ${VERSION}" \
+            --notes-file release_body.md
