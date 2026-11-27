@@ -118,5 +118,6 @@ jobs:
           } > release_body.md
 
           gh release create "${GITHUB_REF_NAME}" "$IPA" "$SHA" \
+            --latest=false \
             --title "冻小梨 iOS 自签版 ${VERSION}" \
             --notes-file release_body.md

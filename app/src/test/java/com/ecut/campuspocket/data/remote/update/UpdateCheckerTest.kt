@@ -29,4 +29,22 @@ class UpdateCheckerTest {
         assertFalse(UpdateChecker.isNewer("latest", "0.4.0"))
         assertFalse(UpdateChecker.isNewer("0.4.1", "unknown"))
     }
+
+    @Test
+    fun `filters out ios tags and picks latest android release`() {
+        assertTrue(UpdateChecker.isAndroidReleaseTag("v0.6.4"))
+        assertFalse(UpdateChecker.isAndroidReleaseTag("ios-v0.6.5"))
+        assertFalse(UpdateChecker.isAndroidReleaseTag("ios-v0.6.4"))
+
+        val listJson = """
+            [
+              {"tag_name":"ios-v0.6.5","draft":false,"prerelease":false,"assets":[{"name":"CampusPocket-iOS-0.6.5-unsigned.ipa"}]},
+              {"tag_name":"v0.6.5","draft":true,"prerelease":false,"assets":[]},
+              {"tag_name":"v0.6.4","draft":false,"prerelease":false,"assets":[{"name":"CampusPocket-0.6.4.apk"}]},
+              {"tag_name":"v0.6.3","draft":false,"prerelease":false,"assets":[]}
+            ]
+        """.trimIndent()
+        val picked = UpdateChecker.selectLatestAndroidRelease(listJson)
+        assertEquals("v0.6.4", picked?.get("tag_name")?.asString)
+    }
 }

@@ -40,10 +40,12 @@ jobs:
           NOTES="docs/RELEASE_NOTES_${VERSION}.md"
           if [ -f "$NOTES" ]; then
             gh release create "${GITHUB_REF_NAME}" "${{ steps.vars.outputs.apk }}" \
+              --latest \
               --title "冻小梨 ${VERSION}" \
               --notes-file "$NOTES"
           else
             gh release create "${GITHUB_REF_NAME}" "${{ steps.vars.outputs.apk }}" \
+              --latest \
               --title "冻小梨 ${VERSION}" \
               --generate-notes
           fi

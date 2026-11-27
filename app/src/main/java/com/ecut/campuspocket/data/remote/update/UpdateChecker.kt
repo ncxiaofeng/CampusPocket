@@ -33,10 +33,18 @@ class UpdateChecker(
     suspend fun check(currentVersion: String): Result<AppUpdateInfo?> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val root = JsonParser
-                    .parseString(fetchLatestRelease())
+                val latestRoot = JsonParser
+                    .parseString(fetchJson(AppLinks.GITHUB_LATEST_RELEASE_API))
                     .asJsonObject
-                val tagName = root.string("tag_name")
+                val candidate = if (isEligibleAndroidRelease(latestRoot)) {
+                    latestRoot
+                } else {
+                    // 当仓库同时发布 iOS（ios-v*）等其他平台 tag 并抢占 Latest 时，
+                    // 自动从最近 Release 列表里筛选真正的最新 Android 正式版。
+                    selectLatestAndroidRelease(fetchJson(AppLinks.GITHUB_RELEASES_LIST_API))
+                } ?: return@runCatching null
+
+                val tagName = candidate.string("tag_name")
                 val latestVersion = normalizeVersion(tagName)
                 if (latestVersion.isBlank() || !isNewer(latestVersion, currentVersion)) {
                     null
@@ -44,18 +52,18 @@ class UpdateChecker(
                     AppUpdateInfo(
                         version = latestVersion,
                         tagName = tagName,
-                        releaseNotes = root.string("body"),
-                        releasePageUrl = root.string("html_url")
+                        releaseNotes = candidate.string("body"),
+                        releasePageUrl = candidate.string("html_url")
                             .ifBlank { AppLinks.GITHUB_RELEASES },
-                        apkDownloadUrl = apkAssetUrl(root)
+                        apkDownloadUrl = apkAssetUrl(candidate)
                     )
                 }
             }
         }
 
-    private fun fetchLatestRelease(): String {
+    private fun fetchJson(url: String): String {
         val request = Request.Builder()
-            .url(AppLinks.GITHUB_LATEST_RELEASE_API)
+            .url(url)
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "CampusPocket")
             .get()
@@ -91,6 +99,39 @@ class UpdateChecker(
     }
 
     companion object {
+
+        private val ANDROID_TAG_REGEX = Regex("^[vV]?\\d+(?:\\.\\d+)+(?:[-+].+)?$")
+
+        fun isAndroidReleaseTag(tagName: String): Boolean =
+            ANDROID_TAG_REGEX.matches(tagName.trim())
+
+        internal fun isEligibleAndroidRelease(root: JsonObject): Boolean {
+            val draft = root.get("draft")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+            val prerelease = root.get("prerelease")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+            if (draft || prerelease) return false
+            val tag = root.get("tag_name")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+            return isAndroidReleaseTag(tag)
+        }
+
+        internal fun selectLatestAndroidRelease(releasesJson: String): JsonObject? {
+            val array = runCatching { JsonParser.parseString(releasesJson).asJsonArray }.getOrNull()
+                ?: return null
+            var best: JsonObject? = null
+            var bestVersion = ""
+            for (el in array) {
+                if (!el.isJsonObject) continue
+                val obj = el.asJsonObject
+                if (!isEligibleAndroidRelease(obj)) continue
+                val tag = obj.get("tag_name")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                val version = normalizeVersion(tag)
+                if (version.isBlank()) continue
+                if (best == null || isNewer(version, bestVersion)) {
+                    best = obj
+                    bestVersion = version
+                }
+            }
+            return best
+        }
 
         fun normalizeVersion(raw: String): String = raw.trim()
             .removePrefix("v")

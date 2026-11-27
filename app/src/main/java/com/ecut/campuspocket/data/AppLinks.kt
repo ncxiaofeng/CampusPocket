@@ -9,6 +9,8 @@ object AppLinks {
     const val GITHUB_RELEASES = "https://github.com/ncxiaofeng/CampusPocket/releases"
     const val GITHUB_LATEST_RELEASE_API =
         "https://api.github.com/repos/ncxiaofeng/CampusPocket/releases/latest"
+    const val GITHUB_RELEASES_LIST_API =
+        "https://api.github.com/repos/ncxiaofeng/CampusPocket/releases?per_page=20"
 
     /**
      * 国内无法访问 GitHub 时的蓝奏云镜像（固定文件夹分享）。
