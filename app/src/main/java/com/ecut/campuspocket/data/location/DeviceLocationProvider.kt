@@ -41,41 +41,89 @@ class DeviceLocationProvider(
         return coarse || fine
     }
 
-    suspend fun currentLocation(): Location? = withContext(Dispatchers.IO) {
+    suspend fun currentLocation(
+        maxAgeMs: Long = FRESH_MS,
+        maxAcceptableAccuracyMeters: Float = 0f
+    ): Location? = withContext(Dispatchers.IO) {
         if (!hasPermission()) return@withContext null
         val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return@withContext null
 
-        val cached = bestLastKnown(manager)
-        if (cached != null && System.currentTimeMillis() - cached.time <= FRESH_MS) {
+        val cached = bestLastKnown(manager, maxAgeMs, maxAcceptableAccuracyMeters)
+        val now = System.currentTimeMillis()
+        val cachedFresh = cached != null && now - cached.time <= maxAgeMs
+        val cachedAccurate = cached != null &&
+            (maxAcceptableAccuracyMeters <= 0f || (cached.hasAccuracy() && cached.accuracy <= maxAcceptableAccuracyMeters))
+        if (cachedFresh && cachedAccurate) {
             return@withContext cached
         }
 
         val fresh = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getCurrentLocation(manager)
+            getCurrentLocation(manager, maxAcceptableAccuracyMeters)
         } else {
             requestSingleUpdate(manager)
         }
-        fresh ?: cached
+        pickBetterLocation(fresh, cached, maxAcceptableAccuracyMeters)
     }
 
     @SuppressLint("MissingPermission")
-    private fun bestLastKnown(manager: LocationManager): Location? {
+    private fun bestLastKnown(
+        manager: LocationManager,
+        maxAgeMs: Long,
+        maxAcceptableAccuracyMeters: Float
+    ): Location? {
         if (!hasPermission()) return null
-        return listOf(
+        val now = System.currentTimeMillis()
+        val candidates = listOf(
             LocationManager.GPS_PROVIDER,
             LocationManager.NETWORK_PROVIDER,
             LocationManager.PASSIVE_PROVIDER
         ).mapNotNull { provider ->
             runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
-        }.maxByOrNull { it.time }
+        }
+        if (candidates.isEmpty()) return null
+        // 优先挑新鲜且精度达标的点；若都在有效期外，则按时间戳取最近一次作为兜底。
+        val freshOnes = candidates.filter { now - it.time <= maxAgeMs }
+        if (freshOnes.isNotEmpty()) {
+            if (maxAcceptableAccuracyMeters > 0f) {
+                val accurate = freshOnes.filter {
+                    it.hasAccuracy() && it.accuracy <= maxAcceptableAccuracyMeters
+                }
+                if (accurate.isNotEmpty()) {
+                    return accurate.minWith(compareBy<Location> { it.accuracy }.thenByDescending { it.time })
+                }
+            }
+            return freshOnes.maxByOrNull { it.time }
+        }
+        return candidates.maxByOrNull { it.time }
+    }
+
+    private fun pickBetterLocation(
+        fresh: Location?,
+        cached: Location?,
+        maxAcceptableAccuracyMeters: Float
+    ): Location? {
+        if (fresh == null) return cached
+        if (cached == null) return fresh
+        if (maxAcceptableAccuracyMeters > 0f &&
+            fresh.hasAccuracy() && cached.hasAccuracy() &&
+            fresh.accuracy > maxAcceptableAccuracyMeters &&
+            cached.accuracy <= maxAcceptableAccuracyMeters &&
+            System.currentTimeMillis() - cached.time <= FRESH_MS
+        ) {
+            return cached
+        }
+        return fresh
     }
 
     /**
      * Android 11+ 的单次定位接口，带 10 秒超时。
      */
     @SuppressLint("MissingPermission")
-    private suspend fun getCurrentLocation(manager: LocationManager): Location? {
+    private suspend fun getCurrentLocation(
+        manager: LocationManager,
+        maxAcceptableAccuracyMeters: Float = 0f
+    ): Location? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         return withTimeoutOrNull(TIMEOUT_MS) {
             suspendCancellableCoroutine { continuation ->
@@ -90,6 +138,7 @@ class DeviceLocationProvider(
 
                 var remaining = providers.size
                 var finished = false
+                var bestFallback: Location? = null
                 fun finish(location: Location?) {
                     if (finished) return
                     finished = true
@@ -104,15 +153,28 @@ class DeviceLocationProvider(
                             ContextCompat.getMainExecutor(context)
                         ) { location ->
                             if (location != null) {
-                                finish(location)
+                                val goodEnough = maxAcceptableAccuracyMeters <= 0f ||
+                                    (location.hasAccuracy() && location.accuracy <= maxAcceptableAccuracyMeters)
+                                if (goodEnough) {
+                                    finish(location)
+                                } else {
+                                    val prev = bestFallback
+                                    if (prev == null ||
+                                        (location.hasAccuracy() && (!prev.hasAccuracy() || location.accuracy < prev.accuracy))
+                                    ) {
+                                        bestFallback = location
+                                    }
+                                    remaining -= 1
+                                    if (remaining <= 0) finish(bestFallback)
+                                }
                             } else {
                                 remaining -= 1
-                                if (remaining == 0) finish(null)
+                                if (remaining <= 0) finish(bestFallback)
                             }
                         }
                     }.onFailure {
                         remaining -= 1
-                        if (remaining == 0) finish(null)
+                        if (remaining <= 0) finish(bestFallback)
                     }
                 }
             }

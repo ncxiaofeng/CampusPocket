@@ -22,6 +22,7 @@ class XgwxElectricityClientTest {
         assertEquals("202400123", XgwxElectricityClient.extractUserId("href='?userid=202400123&a=1'"))
         assertEquals("202400123", XgwxElectricityClient.extractUserId("var userId = '202400123';"))
         assertEquals("2024AB09", XgwxElectricityClient.extractUserId("""{"userid":"2024AB09"}"""))
+        assertNull(XgwxElectricityClient.extractUserId("var userid = 'null';"))
         assertNull(XgwxElectricityClient.extractUserId("<html>login</html>"))
     }
 
@@ -74,5 +75,31 @@ class XgwxElectricityClientTest {
         } catch (_: SessionExpiredException) {
             // expected
         }
+    }
+
+    @Test
+    fun `requires operatorPwd for cold-start electricity index urls`() {
+        val bare = XgwxElectricityClient.buildCandidateIndexUrls("")
+        assertTrue(bare.isEmpty())
+
+        val configured = XgwxElectricityClient.buildCandidateIndexUrls("demo-pwd")
+        assertEquals(1, configured.size)
+        assertTrue(configured[0].contains("operatorPwd=demo-pwd"))
+    }
+
+    @Test
+    fun `distinguishes authenticated xgwx pages from cas login redirects`() {
+        assertTrue(
+            XgwxElectricityClient.isXgwxAuthenticatedPage(
+                "https://xgwx.ecut.edu.cn/app/wechat/index.jsp",
+                "<html><body>宿舍缴费</body></html>"
+            )
+        )
+        assertTrue(
+            !XgwxElectricityClient.isXgwxAuthenticatedPage(
+                "https://authserver.ecut.edu.cn/authserver/login?service=...",
+                "<html><body>统一身份认证 password</body></html>"
+            )
+        )
     }
 }

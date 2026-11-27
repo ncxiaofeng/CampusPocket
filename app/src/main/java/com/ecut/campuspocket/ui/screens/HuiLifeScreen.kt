@@ -59,8 +59,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceKind
 import com.ecut.campuspocket.data.remote.huilife.HuiLifeDiagnostics
 import com.ecut.campuspocket.data.remote.huilife.HuiLifePlatform
@@ -92,6 +94,7 @@ private const val HUI_ALIPAY_APP_ID = "2019061465519660"
 @Composable
 fun HuiLifeScreen(
     onBack: () -> Unit,
+    onOpenConfig: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: HuiLifeViewModel = viewModel(factory = HuiLifeViewModel.Factory)
 ) {
@@ -100,6 +103,10 @@ fun HuiLifeScreen(
     val dashboard = viewModel.dashboard
     val loggedIn = viewModel.accountLoggedIn || viewModel.appLoggedIn
     val showLogin = viewModel.loginFormVisible || !loggedIn
+    val configVersion by AppContainer.runtimeConfig.version.collectAsStateWithLifecycle()
+    val hasAppControlConfig = remember(configVersion) {
+        AppContainer.runtimeConfig.get().hasHuiLife
+    }
 
     val scanner = rememberLauncherForActivityResult(ScanCustomCode()) { result ->
         when (result) {
@@ -190,7 +197,11 @@ fun HuiLifeScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "饮水 / 吹风 / 淋浴 · 扫码后手动启动 · 不提供停止",
+                    text = if (viewModel.appLoggedIn || hasAppControlConfig) {
+                        "饮水 / 吹风 / 淋浴 · 扫码启动 · 仅支持停止自己启动的设备"
+                    } else {
+                        "饮水 / 吹风 / 淋浴 · 钱包余额与设备实时状态"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -241,9 +252,21 @@ fun HuiLifeScreen(
             }
 
             if (showLogin) {
-                item { HuiLifeLoginCard(viewModel) }
+                item {
+                    HuiLifeLoginCard(
+                        viewModel = viewModel,
+                        hasAppControlConfig = hasAppControlConfig,
+                        onOpenConfig = onOpenConfig
+                    )
+                }
             } else {
-                item { SessionCard(viewModel) }
+                item {
+                    SessionCard(
+                        viewModel = viewModel,
+                        hasAppControlConfig = hasAppControlConfig,
+                        onOpenConfig = onOpenConfig
+                    )
+                }
                 item {
                     AppCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -315,9 +338,10 @@ fun HuiLifeScreen(
                                 Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                                     Text(
                                         when {
+                                            !viewModel.appLoggedIn && hasAppControlConfig ->
+                                                "收藏设备列表需要「设备控制」登录；或等有消费记录后自动显示。"
                                             !viewModel.appLoggedIn ->
-                                                "设备列表需要「设备控制」登录。查询登录只负责余额/消费；" +
-                                                    "请切换设备控制再做一次短信验证。"
+                                                "暂无常用设备记录；产生接水/吹风消费或扫码添加设备后会显示实时状态，也可直接点下方跳转支付宝小程序使用。"
                                             dashboard?.deviceError != null ->
                                                 "设备读取失败：${dashboard?.deviceError.orEmpty()}"
                                             else ->
@@ -352,7 +376,7 @@ fun HuiLifeScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    if (!viewModel.appLoggedIn) {
+                                    if (!viewModel.appLoggedIn && hasAppControlConfig) {
                                         Spacer(Modifier.height(8.dp))
                                         Button(
                                             onClick = { viewModel.openLogin(HuiLifePlatform.APP) },
@@ -433,7 +457,19 @@ fun HuiLifeScreen(
                                             )
                                         }
                                         if (viewModel.appLoggedIn) {
-                                            if (viewModel.isScanned(device.id)) {
+                                            if (viewModel.canStop(device.id)) {
+                                                Button(
+                                                    onClick = { viewModel.askStop(device) },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = ErrorRed
+                                                    ),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    contentPadding = PaddingValues(
+                                                        horizontal = 12.dp,
+                                                        vertical = 6.dp
+                                                    )
+                                                ) { Text("停止") }
+                                            } else if (viewModel.isScanned(device.id)) {
                                                 TextButton(
                                                     onClick = { viewModel.removeScannedDevice(device) },
                                                     contentPadding = PaddingValues(horizontal = 6.dp)
@@ -469,9 +505,13 @@ fun HuiLifeScreen(
                                             }
                                         } else {
                                             Text(
-                                                "需设备登录",
+                                                if (hasAppControlConfig) {
+                                                    "需设备登录"
+                                                } else {
+                                                    status?.label ?: "仅查看"
+                                                },
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = WarningAmber
+                                                color = if (hasAppControlConfig) WarningAmber else statusColor
                                             )
                                         }
                                     }
@@ -546,7 +586,7 @@ fun HuiLifeScreen(
 
                 item {
                     Text(
-                        "只有你扫过二维码的设备才显示「启动」；不提供停止；不自动接水、不充值。" +
+                        "只有你扫过二维码的设备才显示「启动」；仅支持停止确认由你本人启动的运行中设备，避免误停他人设备；不自动接水、不充值。" +
                             "余额与账单来自慧生活接口，以官方小程序为准。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -578,6 +618,28 @@ fun HuiLifeScreen(
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.cancelStart() }) { Text("取消") }
+            }
+        )
+    }
+
+    viewModel.confirmStopDevice?.let { device ->
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelStop() },
+            title = { Text("停止 ${device.name}？") },
+            text = {
+                Text(
+                    "确认向该设备发送停止指令并结束本次使用？仅会停止由你本人启动的设备，账单将在结束后自动结算。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.confirmStop() },
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed)
+                ) { Text("确认停止") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelStop() }) { Text("取消") }
             }
         )
     }
@@ -626,7 +688,12 @@ fun HuiLifeScreen(
 }
 
 @Composable
-private fun HuiLifeLoginCard(viewModel: HuiLifeViewModel) {
+private fun HuiLifeLoginCard(
+    viewModel: HuiLifeViewModel,
+    hasAppControlConfig: Boolean,
+    onOpenConfig: () -> Unit
+) {
+    val appControlBlocked = viewModel.platform == HuiLifePlatform.APP && !hasAppControlConfig
     AppCard {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -635,7 +702,7 @@ private fun HuiLifeLoginCard(viewModel: HuiLifeViewModel) {
                 Column {
                     Text("登录慧生活798", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "手机号 + 短信验证码，不需要密码",
+                        "查询登录无需任何配置；手机号 + 短信验证码即可",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -645,108 +712,134 @@ private fun HuiLifeLoginCard(viewModel: HuiLifeViewModel) {
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PlatformChip(
-                    label = "查询登录",
+                    label = "查询登录（免配置）",
                     selected = viewModel.platform == HuiLifePlatform.ACCOUNT,
                     modifier = Modifier.weight(1f)
                 ) { viewModel.choosePlatform(HuiLifePlatform.ACCOUNT) }
                 PlatformChip(
-                    label = "设备控制",
+                    label = if (hasAppControlConfig) "设备控制" else "设备控制（高级）",
                     selected = viewModel.platform == HuiLifePlatform.APP,
                     modifier = Modifier.weight(1f)
                 ) { viewModel.choosePlatform(HuiLifePlatform.APP) }
             }
             Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
-                value = viewModel.phone,
-                onValueChange = { viewModel.phone = it.filter(Char::isDigit).take(11) },
-                label = { Text("手机号") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(10.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = viewModel.graphCode,
-                    onValueChange = { viewModel.graphCode = it.take(8) },
-                    label = { Text("图形验证码") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
+            if (appControlBlocked) {
+                Text(
+                    "公开版默认支持免配置「查询登录」：可查看钱包余额、常用设备实时空闲/使用中状态与消费记录，并一键跳转支付宝小程序接水/吹风。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.width(10.dp))
-                Box(
-                    modifier = Modifier
-                        .size(width = 96.dp, height = 56.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable { viewModel.loadCaptcha() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    val captcha = viewModel.captcha
-                    if (captcha != null) {
-                        Image(
-                            bitmap = captcha,
-                            contentDescription = "图形验证码",
-                            modifier = Modifier.fillMaxWidth().padding(4.dp)
-                        )
-                    } else {
-                        Text(
-                            "获取验证码",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "App 内直接「一键启动设备」需要官方客户端登录盐（huilife.app.sign.salt），公开版不内置。如需启用，可在「高级配置」中填写。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { viewModel.choosePlatform(HuiLifePlatform.ACCOUNT) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("切回免配置查询登录") }
+                    TextButton(onClick = onOpenConfig) { Text("去高级配置") }
+                }
+            } else {
+                OutlinedTextField(
+                    value = viewModel.phone,
+                    onValueChange = { viewModel.phone = it.filter(Char::isDigit).take(11) },
+                    label = { Text("手机号") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = viewModel.graphCode,
+                        onValueChange = { viewModel.graphCode = it.take(8) },
+                        label = { Text("图形验证码") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(width = 96.dp, height = 56.dp)
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { viewModel.loadCaptcha() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val captcha = viewModel.captcha
+                        if (captcha != null) {
+                            Image(
+                                bitmap = captcha,
+                                contentDescription = "图形验证码",
+                                modifier = Modifier.fillMaxWidth().padding(4.dp)
+                            )
+                        } else {
+                            Text(
+                                "获取验证码",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "图形验证码看不清时点图片刷新",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = viewModel.smsCode,
-                    onValueChange = { viewModel.smsCode = it.filter(Char::isDigit).take(8) },
-                    label = { Text("短信验证码") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(10.dp))
-                Button(
-                    onClick = { viewModel.sendSms() },
-                    enabled = !viewModel.loading,
-                    shape = RoundedCornerShape(10.dp)
-                ) { Text(if (viewModel.smsSent) "重新发送" else "发送短信") }
-            }
-            Spacer(Modifier.height(14.dp))
-
-            Button(
-                onClick = { viewModel.login() },
-                enabled = !viewModel.loading,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    if (viewModel.platform == HuiLifePlatform.APP) {
-                        "登录设备控制"
+                    "图形验证码看不清时点图片刷新",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = viewModel.smsCode,
+                        onValueChange = { viewModel.smsCode = it.filter(Char::isDigit).take(8) },
+                        label = { Text("短信验证码") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Button(
+                        onClick = { viewModel.sendSms() },
+                        enabled = !viewModel.loading,
+                        shape = RoundedCornerShape(10.dp)
+                    ) { Text(if (viewModel.smsSent) "重新发送" else "发送短信") }
+                }
+                Spacer(Modifier.height(14.dp))
+
+                Button(
+                    onClick = { viewModel.login() },
+                    enabled = !viewModel.loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (viewModel.platform == HuiLifePlatform.APP) {
+                            "登录设备控制"
+                        } else {
+                            "登录查询"
+                        }
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (hasAppControlConfig) {
+                        "查询端可看余额/设备/消费；设备控制端才能一键启动。两边的短信验证码不能共用，需要分别获取。"
                     } else {
-                        "登录查询"
-                    }
+                        "免配置查询登录即可查看余额、设备实时状态与消费记录，使用设备时可一键跳转支付宝小程序。"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "查询端可看余额/设备/消费；设备控制端才能一键启动。两边的短信验证码不能共用，需要分别获取。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
             if (viewModel.accountLoggedIn || viewModel.appLoggedIn) {
                 Spacer(Modifier.height(6.dp))
                 TextButton(
@@ -787,7 +880,11 @@ private fun PlatformChip(
 }
 
 @Composable
-private fun SessionCard(viewModel: HuiLifeViewModel) {
+private fun SessionCard(
+    viewModel: HuiLifeViewModel,
+    hasAppControlConfig: Boolean,
+    onOpenConfig: () -> Unit
+) {
     AppCard {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -796,8 +893,12 @@ private fun SessionCard(viewModel: HuiLifeViewModel) {
                 Column(Modifier.weight(1f)) {
                     Text("登录状态", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "查询端：${if (viewModel.accountLoggedIn) "已登录" else "未登录"} · " +
-                            "设备端：${if (viewModel.appLoggedIn) "已登录" else "未登录"}",
+                        if (hasAppControlConfig || viewModel.appLoggedIn) {
+                            "查询端：${if (viewModel.accountLoggedIn) "已登录" else "未登录"} · " +
+                                "设备端：${if (viewModel.appLoggedIn) "已登录" else "未登录"}"
+                        } else {
+                            "查询端：${if (viewModel.accountLoggedIn) "已登录（余额 / 设备状态 / 账单）" else "未登录"}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -816,16 +917,21 @@ private fun SessionCard(viewModel: HuiLifeViewModel) {
                         contentPadding = PaddingValues(horizontal = 4.dp)
                     ) { Text("退出查询端", color = ErrorRed) }
                 }
-                if (!viewModel.appLoggedIn) {
+                if (viewModel.appLoggedIn) {
+                    TextButton(
+                        onClick = { viewModel.logout(HuiLifePlatform.APP) },
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text("退出设备控制", color = ErrorRed) }
+                } else if (hasAppControlConfig) {
                     TextButton(
                         onClick = { viewModel.openLogin(HuiLifePlatform.APP) },
                         contentPadding = PaddingValues(horizontal = 4.dp)
                     ) { Text("登录设备控制") }
                 } else {
                     TextButton(
-                        onClick = { viewModel.logout(HuiLifePlatform.APP) },
+                        onClick = onOpenConfig,
                         contentPadding = PaddingValues(horizontal = 4.dp)
-                    ) { Text("退出设备控制", color = ErrorRed) }
+                    ) { Text("配置一键启动") }
                 }
             }
         }

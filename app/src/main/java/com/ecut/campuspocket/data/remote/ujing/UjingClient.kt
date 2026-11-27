@@ -194,7 +194,7 @@ class UjingClient(
                     washerCount = washer,
                     dryerCount = dryer
                 )
-            }
+            }.sortedBy { it.distanceKm }
         }
 
     suspend fun storeInfo(storeId: String, token: String): UjingStoreInfo =

@@ -179,6 +179,7 @@ object CampusEndpoints {
     const val UJING_BASE_URL = "https://phoenix.ujing.online:443/api/v1"
     const val UJING_H5_URL =
         "https://wx.zhinengxiyifang.cn/static/washer-h5/ujing/latest/index.html"
+    const val UJING_H5_LOGIN_URL = "$UJING_H5_URL#/login"
 
     /** 超星学习通：登录落到 i.chaoxing.com，接口分布在多个子域。 */
     const val CHAOXING_HOST = "i.chaoxing.com"
@@ -232,25 +233,33 @@ object CampusEndpoints {
 
     /** 宿舍水电缴费 H5（今日校园“宿舍缴费”里的学生宿舍缴费）。 */
     const val ELECTRICITY_H5_BASE = "https://xgwx.ecut.edu.cn"
+    const val ELECTRICITY_BARE_INDEX_URL = "$ELECTRICITY_H5_BASE/app/wechat/index.jsp"
+    const val ELECTRICITY_BARE_APP_INDEX_URL =
+        "$ELECTRICITY_H5_BASE/app/wechat/index.jsp?appId=wx3be3089d48d67c4e&operatorId=admin"
+    const val ELECTRICITY_SURPLUS_URL = "$ELECTRICITY_H5_BASE/app/wechat/houseMeterSurplus.jsp"
 
     /**
-     * operatorPwd 是宿舍缴费 H5 的固定系统参数，不再编进 APK；
-     * 用户在「更多 → 高级配置」填写后运行期拼接。
+     * 构造宿舍缴费首页地址：
+     * - 未配置 operatorPwd 时使用裸地址，由 CAS 单点登录直接完成授权；
+     * - 若本机额外配置了 operatorPwd，则按原样拼接作为兼容参数。
      */
-    fun electricityIndexUrl(operatorPwd: String): String =
-        "https://xgwx.ecut.edu.cn/app/wechat/index.jsp" +
-            "?appId=wx3be3089d48d67c4e&operatorId=admin" +
-            "&operatorPwd=" + java.net.URLEncoder.encode(operatorPwd, "UTF-8")
+    fun electricityIndexUrl(operatorPwd: String = ""): String {
+        val trimmed = operatorPwd.trim()
+        if (trimmed.isEmpty()) return ELECTRICITY_BARE_INDEX_URL
+        return "$ELECTRICITY_BARE_APP_INDEX_URL&operatorPwd=" +
+            java.net.URLEncoder.encode(trimmed, "UTF-8")
+    }
 
-    fun electricityLogin(operatorPwd: String): LoginTarget = LoginTarget(
+    fun electricityLogin(operatorPwd: String = ""): LoginTarget = LoginTarget(
         systemId = SYSTEM_ELECTRICITY,
         title = "宿舍电费登录",
-        startUrl = electricityIndexUrl(operatorPwd),
+        // 直接走 HTTPS 的 CAS service 入口，避免 xgwx 某些节点把 CAS 重定向到 http:// 导致 ERR_EMPTY_RESPONSE。
+        startUrl = CasSsoManager.buildServiceLoginUrl(electricityIndexUrl(operatorPwd)),
         primaryHost = "xgwx.ecut.edu.cn",
         extraCookieUrls = listOf(AUTH_SERVER_LOGIN_URL),
         requiredPrimaryCookie = "jsessionid",
-        // 只有真正落到缴费首页才算成功，避免把 xgwx 自己的登录页当成已登录。
-        primaryPathPrefix = "/app/wechat/index",
+        // 落到 /app/wechat/ 下即代表 CAS 回调成功并建立了宿舍缴费会话。
+        primaryPathPrefix = "/app/wechat/",
         // 已有 CASTGC 时由 CAS 自动换票，直接落到宿舍缴费页；落到首页后自动保存返回。
         autoCompleteHosts = setOf("xgwx.ecut.edu.cn"),
         preloadStoredCookies = true,

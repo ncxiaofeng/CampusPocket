@@ -30,6 +30,7 @@ object Routes {
     const val CAMPUS_CARD = "campus_card"
     const val CARD_WEB = "card_web"
     const val LAUNDRY = "laundry"
+    const val UJING_LOGIN = "ujing_login"
     const val WATER = "water"
     const val RUN = "run"
     const val PRIVACY = "privacy"

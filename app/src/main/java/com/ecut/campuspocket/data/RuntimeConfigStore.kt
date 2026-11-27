@@ -17,11 +17,15 @@ import javax.crypto.spec.GCMParameterSpec
 data class RuntimeConfig(
     val electricityOperatorPwd: String = "",
     val ujingHmacKey: String = "",
-    val huilifeAppSignSalt: String = ""
+    val huilifeAppSignSalt: String = "",
+    /** 通过远程一次性/限时码导入的字段键集合（"e"/"u"/"h"），UI 中锁定不展示明文防抄写。 */
+    val sealedFields: Set<String> = emptySet()
 ) {
     val hasElectricity: Boolean get() = electricityOperatorPwd.isNotBlank()
     val hasUjing: Boolean get() = ujingHmacKey.isNotBlank()
     val hasHuiLife: Boolean get() = huilifeAppSignSalt.isNotBlank()
+
+    fun isSealed(shortKey: String): Boolean = shortKey in sealedFields
 }
 
 /**
@@ -50,10 +54,17 @@ class RuntimeConfigStore(context: Context) {
     }
 
     fun update(config: RuntimeConfig) {
+        val normalizedSealed = buildSet {
+            if ("e" in config.sealedFields && config.hasElectricity) add("e")
+            if ("u" in config.sealedFields && config.hasUjing) add("u")
+            if ("h" in config.sealedFields && config.hasHuiLife) add("h")
+        }
+        val normalized = config.copy(sealedFields = normalizedSealed)
         val plain = JSONObject()
-            .put("e", config.electricityOperatorPwd)
-            .put("u", config.ujingHmacKey)
-            .put("h", config.huilifeAppSignSalt)
+            .put("e", normalized.electricityOperatorPwd)
+            .put("u", normalized.ujingHmacKey)
+            .put("h", normalized.huilifeAppSignSalt)
+            .put("sealed", normalizedSealed.joinToString(","))
             .toString()
             .toByteArray(Charsets.UTF_8)
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -65,7 +76,7 @@ class RuntimeConfigStore(context: Context) {
         prefs.edit()
             .putString(KEY_PAYLOAD, Base64.encodeToString(payload, Base64.NO_WRAP))
             .apply()
-        cached = config
+        cached = normalized
         _version.value++
     }
 
@@ -90,10 +101,16 @@ class RuntimeConfigStore(context: Context) {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(128, iv))
             val json = JSONObject(String(cipher.doFinal(encrypted), Charsets.UTF_8))
+            val sealedRaw = json.optString("sealed")
+            val sealed = sealedRaw.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
             RuntimeConfig(
                 electricityOperatorPwd = json.optString("e"),
                 ujingHmacKey = json.optString("u"),
-                huilifeAppSignSalt = json.optString("h")
+                huilifeAppSignSalt = json.optString("h"),
+                sealedFields = sealed
             )
         }.getOrDefault(RuntimeConfig())
     }

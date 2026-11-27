@@ -2,6 +2,7 @@ package com.ecut.campuspocket.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -35,8 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,11 +73,21 @@ fun AboutScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var updateState by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
     var showReleaseDialog by remember { mutableStateOf(false) }
     val preferences = com.ecut.campuspocket.AppContainer.preferences
     var autoCheckUpdates by remember { mutableStateOf(preferences.autoCheckUpdates) }
+
+    fun copyQqGroup() {
+        clipboard.setText(AnnotatedString(AppLinks.QQ_GROUP_NUMBER))
+        Toast.makeText(
+            context,
+            "已复制交流群号 ${AppLinks.QQ_GROUP_NUMBER}，可在 QQ 搜索加入",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
 
     fun openUrl(url: String) {
         runCatching {
@@ -154,7 +167,7 @@ fun AboutScreen(
                 )
             }
 
-            item { LinksCard(onOpenUrl = ::openUrl) }
+            item { LinksCard(onOpenUrl = ::openUrl, onCopyQqGroup = ::copyQqGroup) }
 
             item { PrivacyCard(onOpenPrivacy = onOpenPrivacy) }
         }
@@ -320,12 +333,45 @@ private fun UpdateCard(
 }
 
 @Composable
-private fun LinksCard(onOpenUrl: (String) -> Unit) {
+private fun LinksCard(
+    onOpenUrl: (String) -> Unit,
+    onCopyQqGroup: () -> Unit
+) {
     Column {
-        SectionHeader(title = "项目与下载")
+        SectionHeader(title = "项目与交流")
         Spacer(Modifier.height(10.dp))
         AppCard(contentPadding = 0.dp) {
             Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onCopyQqGroup)
+                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("QQ 交流群", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "反馈交流、更新动态与安全配置码获取",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = "群号：${AppLinks.QQ_GROUP_NUMBER}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "复制 ›",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                ThinDivider(Modifier.padding(start = 16.dp))
                 LinkRow(
                     title = "GitHub 项目主页",
                     url = AppLinks.GITHUB_REPO,

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.ecut.campuspocket.AppContainer
+import com.ecut.campuspocket.data.location.CoordinateConverter
 import com.ecut.campuspocket.data.location.DeviceLocationProvider
 import com.ecut.campuspocket.data.remote.ujing.UJING_CAMPUSES
 import com.ecut.campuspocket.data.remote.ujing.UjingCampus
@@ -84,6 +85,20 @@ class UjingViewModel(
             // 如果天气页已经授权过定位，U净默认直接按当前位置查楼栋。
             usingDeviceLocation = locationProvider.hasPermission()
             if (hasSession) refresh()
+        }
+    }
+
+    /** 从官方网页登录页返回后检查新保存的会话并自动加载数据。 */
+    fun syncSessionOnResume() {
+        if (isBusy) return
+        viewModelScope.launch {
+            val nowHasSession = repository.hasSession()
+            if (nowHasSession && (!hasSession || needsLogin || stores.isEmpty())) {
+                hasSession = true
+                needsLogin = false
+                usingDeviceLocation = locationProvider.hasPermission()
+                refresh()
+            }
         }
     }
 
@@ -184,7 +199,10 @@ class UjingViewModel(
             message = null
             try {
                 val deviceLocation = if (usingDeviceLocation) {
-                    locationProvider.currentLocation()
+                    locationProvider.currentLocation(
+                        maxAgeMs = 60_000L,
+                        maxAcceptableAccuracyMeters = 80f
+                    )
                 } else {
                     null
                 }
@@ -193,10 +211,16 @@ class UjingViewModel(
                     usingDeviceLocation = false
                     message = "定位失败，已回退到${selectedCampus.name}"
                 }
-                stores = repository.nearbyStores(
-                    deviceLocation?.latitude ?: selectedCampus.latitude,
-                    deviceLocation?.longitude ?: selectedCampus.longitude
-                )
+                // Android LocationManager 输出 WGS-84，U净后端按 GCJ-02（高德坐标）检索附近楼栋。
+                val (queryLat, queryLng) = if (deviceLocation != null) {
+                    CoordinateConverter.wgs84ToGcj02(
+                        deviceLocation.latitude,
+                        deviceLocation.longitude
+                    )
+                } else {
+                    selectedCampus.latitude to selectedCampus.longitude
+                }
+                stores = repository.nearbyStores(queryLat, queryLng)
                 val target = selectedStore?.let { current ->
                     stores.firstOrNull { it.id == current.id } ?: current
                 } ?: stores.firstOrNull()

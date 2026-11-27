@@ -548,13 +548,20 @@ class HuiLifeClient(
                 .ifBlank { data?.let(::extractTypeCode).orEmpty() }
             val rawTime = gene?.lng("time") ?: 0L
             val endMillis = if (rawTime in 1L until 100_000_000_000L) rawTime * 1000L else rawTime
+            val order = data?.get("order")?.takeIf { it.isJsonObject }?.asJsonObject
+            val usingUserId = listOfNotNull(gene, order, device, data)
+                .firstNotNullOfOrNull { obj ->
+                    listOf("uid", "userId", "ownerId", "accountId")
+                        .firstNotNullOfOrNull { key -> obj.str(key).takeIf { it.isNotBlank() } }
+                }.orEmpty()
             return HuiLifeDeviceStatus(
                 deviceStatus = device.intVal("status"),
                 geneStatus = gene?.intVal("status") ?: 0,
                 endTimeMillis = endMillis,
                 deviceName = name,
                 deviceDetail = detail,
-                deviceTypeCode = typeCode
+                deviceTypeCode = typeCode,
+                usingUserId = usingUserId
             )
         }
 

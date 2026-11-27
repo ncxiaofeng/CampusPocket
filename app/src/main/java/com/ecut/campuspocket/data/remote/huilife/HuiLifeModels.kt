@@ -83,7 +83,8 @@ data class HuiLifeDeviceStatus(
     val endTimeMillis: Long = 0L,
     val deviceName: String = "",
     val deviceDetail: String = "",
-    val deviceTypeCode: String = ""
+    val deviceTypeCode: String = "",
+    val usingUserId: String = ""
 ) {
     val label: String
         get() = when {
@@ -96,6 +97,10 @@ data class HuiLifeDeviceStatus(
 
     val canStart: Boolean
         get() = deviceStatus != 0 && geneStatus == 99
+
+    /** 设备处于运行/启动中状态（非离线、非禁用、非空闲）。 */
+    val isRunning: Boolean
+        get() = deviceStatus != 0 && geneStatus != 99 && geneStatus != 98
 }
 
 data class HuiLifeWallet(

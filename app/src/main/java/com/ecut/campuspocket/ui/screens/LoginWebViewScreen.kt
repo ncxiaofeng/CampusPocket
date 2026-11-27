@@ -96,6 +96,12 @@ fun LoginWebViewScreen(
             val rows = runCatching {
                 repo.loadCookiesForHost(host)
             }.getOrDefault(emptyList())
+            // CAS 域没有 CASTGC 时切勿注入残留的旧 route / JSESSIONID，否则首次提交登录会串节点回弹。
+            if (host == CampusEndpoints.CAS_HOST &&
+                rows.none { it.name.lowercase() in CampusEndpoints.CAS_TICKET_COOKIE_NAMES }
+            ) {
+                return@forEach
+            }
             val scheme = when {
                 host in target.httpsHosts -> "https"
                 host.contains("authserver") ||
@@ -438,6 +444,25 @@ fun LoginWebViewScreen(
                     cookieManager.setAcceptCookie(true)
                     cookieManager.setAcceptThirdPartyCookies(webView, true)
                     webView.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): Boolean {
+                            val uri = request?.url ?: return false
+                            val host = uri.host.orEmpty()
+                            // 学校部分旧入口会把 CAS 302 到 http://authserver.ecut.edu.cn（80 端口返回 502 / ERR_EMPTY_RESPONSE），
+                            // 仅对 GET 跳转自动升级为 https://，不干扰 POST 表单提交。
+                            if (request.method.equals("GET", ignoreCase = true) &&
+                                uri.scheme.equals("http", ignoreCase = true) &&
+                                host in target.httpsHosts
+                            ) {
+                                val upgraded = uri.buildUpon().scheme("https").build().toString()
+                                view?.loadUrl(upgraded)
+                                return true
+                            }
+                            return false
+                        }
+
                         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                             isLoading = true
                         }

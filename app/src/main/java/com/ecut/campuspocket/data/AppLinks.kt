@@ -18,4 +18,7 @@ object AppLinks {
      */
     const val LANZOU_FOLDER = "https://ncxiaofeng.lanzoub.com/b0j1u822d"
     const val LANZOU_FOLDER_PWD = "c3bc"
+
+    /** 用户交流与配置码获取 QQ 群。 */
+    const val QQ_GROUP_NUMBER = "163103375"
 }

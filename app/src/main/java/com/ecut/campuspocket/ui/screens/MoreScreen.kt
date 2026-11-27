@@ -141,7 +141,7 @@ fun MoreScreen(
                 "配",
                 WarningAmber,
                 "高级配置",
-                "电费 / U净 / 慧生活设备参数（本机加密）",
+                "电费 / 798一键启停（U净已免配置）",
                 "设置"
             ) { onNavigate(Routes.ADVANCED_CONFIG) },
             MoreItem("隐", Color(0xFF607D8B), "隐私说明", "凭据如何保存在本机", null) { onNavigate(Routes.PRIVACY) },

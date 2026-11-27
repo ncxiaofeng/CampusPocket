@@ -23,8 +23,8 @@ android {
         applicationId = "com.ecut.campuspocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.6.3"
+        versionCode = 17
+        versionName = "0.6.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }

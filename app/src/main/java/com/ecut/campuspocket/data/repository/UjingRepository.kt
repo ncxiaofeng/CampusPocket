@@ -34,15 +34,21 @@ class UjingRepository(
 
     suspend fun login(mobile: String, captcha: String): UjingSession {
         val session = client.login(mobile, captcha)
+        saveToken(session.token)
+        return session
+    }
+
+    suspend fun saveToken(token: String) {
+        val cleaned = token.trim()
+        require(cleaned.isNotBlank()) { "U净登录凭证为空" }
         authDao.upsert(
             AuthCredentialEntity(
                 systemId = CampusEndpoints.SYSTEM_UJING,
                 domain = "phoenix.ujing.online",
-                cookie = session.token,
+                cookie = cleaned,
                 updatedAt = System.currentTimeMillis()
             )
         )
-        return session
     }
 
     suspend fun logout() {

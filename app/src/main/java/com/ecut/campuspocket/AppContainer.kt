@@ -3,6 +3,7 @@ package com.ecut.campuspocket
 import android.content.Context
 import com.ecut.campuspocket.data.AppPreferences
 import com.ecut.campuspocket.data.CredentialVault
+import com.ecut.campuspocket.data.RemoteConfigClaimClient
 import com.ecut.campuspocket.data.RuntimeConfigStore
 import com.ecut.campuspocket.data.local.CampusDatabase
 import com.ecut.campuspocket.data.location.DeviceLocationProvider
@@ -75,6 +76,17 @@ object AppContainer {
     /** 电费 operatorPwd / U净 HMAC / 慧生活设备盐，运行期配置并加密保存。 */
     val runtimeConfig: RuntimeConfigStore by lazy {
         RuntimeConfigStore(requireContext())
+    }
+
+    /** 远程一次性 / 限时配置二维码拉取与阅后即焚客户端；不携带校内 Cookie 且禁止重定向。 */
+    val remoteConfigClaimClient: RemoteConfigClaimClient by lazy {
+        RemoteConfigClaimClient(
+            baseHttpClient.newBuilder()
+                .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+        )
     }
 
     val database: CampusDatabase by lazy {

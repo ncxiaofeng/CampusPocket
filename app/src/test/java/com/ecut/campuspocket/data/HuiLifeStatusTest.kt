@@ -182,4 +182,88 @@ class HuiLifeStatusTest {
         assertEquals(HuiLifeDeviceKind.OTHER, unknownBtype3.kind)
         assertEquals(HuiLifeDeviceKind.SHOWER, showerByArea.kind)
     }
+
+    @Test
+    fun onlyAllowsStoppingSelfStartedOrOwnedRunningDevices() {
+        val now = 1_700_000_000_000L
+        val runningOther = HuiLifeDeviceStatus(deviceStatus = 1, geneStatus = 5, usingUserId = "other_uid")
+        val runningMineByServer = HuiLifeDeviceStatus(deviceStatus = 1, geneStatus = 5, usingUserId = "my_uid")
+        val runningNoUid = HuiLifeDeviceStatus(deviceStatus = 1, geneStatus = 5)
+        val idle = HuiLifeDeviceStatus(deviceStatus = 1, geneStatus = 99)
+        val offline = HuiLifeDeviceStatus(deviceStatus = 0, geneStatus = 5)
+
+        // 别人占用中的设备绝对不能停。
+        assertFalse(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = true,
+                status = runningOther,
+                startedByMeMillis = null,
+                myUid = "my_uid",
+                nowMillis = now
+            )
+        )
+        // 未登录设备控制端不能停。
+        assertFalse(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = false,
+                status = runningNoUid,
+                startedByMeMillis = now - 5_000L,
+                nowMillis = now
+            )
+        )
+        // 空闲或离线不能停。
+        assertFalse(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = true,
+                status = idle,
+                startedByMeMillis = now - 5_000L,
+                nowMillis = now
+            )
+        )
+        assertFalse(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = true,
+                status = offline,
+                startedByMeMillis = now - 5_000L,
+                nowMillis = now
+            )
+        )
+        // 本机 30 分钟内亲手启动且运行中 -> 允许停。
+        assertTrue(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = true,
+                status = runningNoUid,
+                startedByMeMillis = now - 60_000L,
+                nowMillis = now
+            )
+        )
+        // 超过 30 分钟 TTL 不再允许停。
+        assertFalse(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = true,
+                status = runningNoUid,
+                startedByMeMillis = now - 31 * 60 * 1000L,
+                nowMillis = now
+            )
+        )
+        // 服务端返回 usingUserId 匹配本人 uid -> 允许停。
+        assertTrue(
+            HuiLifeViewModel.shouldAllowStop(
+                appLoggedIn = true,
+                status = runningMineByServer,
+                startedByMeMillis = null,
+                myUid = "my_uid",
+                nowMillis = now
+            )
+        )
+
+        // 轮询清理：刚启动 5 秒内仍空闲不提前清理；超过 15 秒回到空闲自动清理。
+        val kept = HuiLifeViewModel.reconcileStartedByMe(
+            startedByMeAt = mapOf("d1" to now - 5_000L, "d2" to now - 25_000L),
+            statuses = mapOf("d1" to idle, "d2" to idle),
+            nowMillis = now
+        )
+        assertTrue("d1" in kept)
+        assertFalse("d2" in kept)
+    }
 }

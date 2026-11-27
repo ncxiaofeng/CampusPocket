@@ -159,6 +159,12 @@ fun CampusWebPageScreen(
             val rows = runCatching {
                 repo.loadCookiesForHost(cookieHost)
             }.getOrDefault(emptyList())
+            // CAS 域没有 CASTGC 时不注入残留的旧 route / JSESSIONID，避免表单提交串节点失败。
+            if (cookieHost == CampusEndpoints.CAS_HOST &&
+                rows.none { it.name.lowercase() in CampusEndpoints.CAS_TICKET_COOKIE_NAMES }
+            ) {
+                return@forEach
+            }
             val scheme = when {
                 cookieHost.contains("authserver") ||
                     cookieHost.contains("atrust") ||
@@ -390,7 +396,16 @@ fun CampusWebPageScreen(
                                 view: WebView?,
                                 request: WebResourceRequest?
                             ): Boolean {
-                                val nextUrl = request?.url?.toString().orEmpty()
+                                val uri = request?.url ?: return true
+                                val nextUrl = uri.toString()
+                                // authserver 的 80 端口会返回 502 / ERR_EMPTY_RESPONSE，GET 跳转自动升级为 https。
+                                if (request.method.equals("GET", ignoreCase = true) &&
+                                    uri.scheme.equals("http", ignoreCase = true) &&
+                                    uri.host.equals(CampusEndpoints.CAS_HOST, ignoreCase = true)
+                                ) {
+                                    view?.loadUrl(uri.buildUpon().scheme("https").build().toString())
+                                    return true
+                                }
                                 if (nextUrl.startsWith("http://") || nextUrl.startsWith("https://")) {
                                     return false
                                 }

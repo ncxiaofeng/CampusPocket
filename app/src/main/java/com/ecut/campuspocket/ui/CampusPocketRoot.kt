@@ -130,6 +130,7 @@ import com.ecut.campuspocket.ui.screens.RuntimeConfigScreen
 import com.ecut.campuspocket.ui.screens.ScheduleScreen
 import com.ecut.campuspocket.ui.screens.SyncScreen
 import com.ecut.campuspocket.ui.screens.TodayScreen
+import com.ecut.campuspocket.ui.screens.UjingLoginWebViewScreen
 import com.ecut.campuspocket.ui.screens.UjingScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -448,15 +449,12 @@ fun CampusPocketRoot(
                 )
             }
             composable(Routes.ELECTRICITY_LOGIN) {
-                // 直接打开宿舍缴费页：已有 CASTGC 时静默 SSO；
-                // 没有时在同一次 WebView 里完成 CAS 登录并保存 xgwx 会话，
-                // 不再依赖 OkHttp 对集群粘性 Cookie 的静默换票。
                 val operatorPwd = AppContainer.runtimeConfig.get().electricityOperatorPwd
                 if (operatorPwd.isBlank()) {
                     MissingConfigScreen(
                         title = "宿舍电费登录",
-                        message = "电费 H5 需要本机的 operatorPwd 参数，它不再编进 APK。" +
-                            "可以先用今日校园查/缴费，或在「高级配置」里填写。",
+                        message = "学校宿舍缴费系统在冷启动会话时校验 operatorPwd，公开版不内置该参数。" +
+                            "你可以直接用今日校园查电费，或在「高级配置」里填写 / 扫码导入。",
                         onOpenConfig = { navController.navigate(Routes.ADVANCED_CONFIG) },
                         onBack = { navController.popBackStack() }
                     )
@@ -623,12 +621,19 @@ fun CampusPocketRoot(
             }
             composable(Routes.LAUNDRY) {
                 UjingScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenWebLogin = { navController.navigate(Routes.UJING_LOGIN) }
+                )
+            }
+            composable(Routes.UJING_LOGIN) {
+                UjingLoginWebViewScreen(
                     onBack = { navController.popBackStack() }
                 )
             }
             composable(Routes.WATER) {
                 HuiLifeScreen(
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    onOpenConfig = { navController.navigate(Routes.ADVANCED_CONFIG) }
                 )
             }
             composable(Routes.RUN) {

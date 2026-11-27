@@ -42,15 +42,19 @@ class XgwxElectricityClient(
 ) {
 
     suspend fun fetchSnapshot(): XgwxSnapshot = withContext(Dispatchers.IO) {
-        val indexUrl = indexUrl()
-        var userId = loadIndexUserId(indexUrl)
+        val candidates = candidateIndexUrls()
+        val resolved = loadIndexUserId(candidates)
+        var userId = resolved.userId
+        var referer = resolved.resolvedUrl
         val houseJson = try {
-            fetchBindHouses(userId, indexUrl)
+            fetchBindHouses(userId, referer)
         } catch (expired: SessionExpiredException) {
             // 首页里读到旧缓存/半过期状态时，清掉损坏的 xgwx Cookie 并换票重试一次。
-            if (!renewElectricitySession(indexUrl)) throw expired
-            userId = loadIndexUserId(indexUrl, allowRecovery = false)
-            fetchBindHouses(userId, indexUrl)
+            if (!renewElectricitySession(candidates.first())) throw expired
+            val retried = loadIndexUserId(candidates, allowRecovery = false)
+            userId = retried.userId
+            referer = retried.resolvedUrl
+            fetchBindHouses(userId, referer)
         }
         val root = parseObject(houseJson)
         if (root.string("ret") != "1") {
@@ -89,31 +93,63 @@ class XgwxElectricityClient(
             referer = referer
         )
 
+    private data class ResolvedUser(
+        val userId: String,
+        val resolvedUrl: String
+    )
+
+    private data class PageResponse(
+        val finalUrl: String,
+        val body: String
+    )
+
     /**
      * 读取宿舍缴费首页里的 userid。
      *
-     * 旧 xgwx Cookie 失效或损坏时，页面可能 302 到 CAS，或直接返回 HTTP 500/401/403。
-     * 此时先清掉 xgwx 旧会话，再用 CASTGC 静默换票（必要时触发自动登录）并重试。
+     * 未配置 operatorPwd 时会依次尝试裸地址（index.jsp / houseMeterSurplus.jsp 等）；
+     * 旧 xgwx Cookie 失效或损坏时，先清掉 xgwx 旧会话，再用 CASTGC 静默换票并重试。
      */
     private suspend fun loadIndexUserId(
-        indexUrl: String,
+        candidates: List<String>,
         allowRecovery: Boolean = true
-    ): String {
+    ): ResolvedUser {
         var lastError: IOException? = null
-        val first = runCatching { get(indexUrl) }.onFailure {
-            if (it is IOException) lastError = it
-        }.getOrNull()
-        first?.let(::extractUserId)?.let { return it }
+        var landedOnXgwxWithoutUserId = false
+
+        fun tryCandidates(): ResolvedUser? {
+            for (url in candidates) {
+                val page = runCatching { getPage(url) }.onFailure {
+                    if (it is IOException) lastError = it
+                }.getOrNull() ?: continue
+                val userId = extractUserId(page.body)
+                if (userId != null) {
+                    return ResolvedUser(userId = userId, resolvedUrl = page.finalUrl.ifBlank { url })
+                }
+                if (isXgwxAuthenticatedPage(page.finalUrl, page.body)) {
+                    landedOnXgwxWithoutUserId = true
+                }
+            }
+            return null
+        }
+
+        tryCandidates()?.let { return it }
 
         if (!allowRecovery) {
+            if (landedOnXgwxWithoutUserId && operatorPwdProvider().isBlank()) {
+                throw ConfigurationRequiredException(
+                    "宿舍缴费系统拒绝了免参入口；可在「更多 → 高级配置」补充 operatorPwd，或直接用今日校园查电费"
+                )
+            }
             throw SessionExpiredException("统一认证已过期，请重新登录")
         }
 
-        if (renewElectricitySession(indexUrl)) {
-            val second = runCatching { get(indexUrl) }.onFailure {
-                if (it is IOException) lastError = it
-            }.getOrNull()
-            second?.let(::extractUserId)?.let { return it }
+        if (renewElectricitySession(candidates.first())) {
+            tryCandidates()?.let { return it }
+        }
+        if (landedOnXgwxWithoutUserId && operatorPwdProvider().isBlank()) {
+            throw ConfigurationRequiredException(
+                "宿舍缴费系统需要 operatorPwd 才能识别宿舍；可在「更多 → 高级配置」填写，或直接用今日校园查电费"
+            )
         }
         if (lastError != null && lastError !is SessionExpiredException &&
             !isRecoverableHttpError(lastError!!)
@@ -143,14 +179,14 @@ class XgwxElectricityClient(
         return msg.contains("401") || msg.contains("403") || msg.contains("500") || msg.contains("502")
     }
 
-    private fun indexUrl(): String {
-        val operatorPwd = operatorPwdProvider()
-        if (operatorPwd.isBlank()) {
+    private fun candidateIndexUrls(): List<String> {
+        val operatorPwd = operatorPwdProvider().trim()
+        if (operatorPwd.isEmpty()) {
             throw ConfigurationRequiredException(
-                "未配置电费参数：公开版不内置；可在「更多 → 高级配置」填写，或直接用今日校园查电费"
+                "未配置电费参数：公开版不内置；可直接用「今日校园」查电费，或在「更多 → 高级配置」填写"
             )
         }
-        return CampusEndpoints.electricityIndexUrl(operatorPwd)
+        return buildCandidateIndexUrls(operatorPwd, baseUrl)
     }
 
     private fun selectMeter(houses: JsonArray): MeterSelection? {
@@ -325,7 +361,7 @@ class XgwxElectricityClient(
         return runCatching { data.asDouble }.getOrNull()?.takeIf { it > 0.0 }
     }
 
-    private fun get(url: String): String {
+    private fun getPage(url: String): PageResponse {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", CampusEndpoints.DESKTOP_USER_AGENT)
@@ -339,7 +375,10 @@ class XgwxElectricityClient(
             if (!response.isSuccessful) {
                 throw IOException("宿舍缴费系统返回 ${response.code}")
             }
-            return response.body?.string().orEmpty()
+            return PageResponse(
+                finalUrl = response.request.url.toString(),
+                body = response.body?.string().orEmpty()
+            )
         }
     }
 
@@ -400,17 +439,40 @@ class XgwxElectricityClient(
     )
 
     companion object {
+        internal fun buildCandidateIndexUrls(
+            operatorPwd: String,
+            baseUrl: String = CampusEndpoints.ELECTRICITY_H5_BASE
+        ): List<String> {
+            val trimmed = operatorPwd.trim()
+            val normalizedBase = baseUrl.trimEnd('/')
+            if (trimmed.isEmpty()) return emptyList()
+            return listOf(
+                "$normalizedBase/app/wechat/index.jsp" +
+                    "?appId=wx3be3089d48d67c4e&operatorId=admin" +
+                    "&operatorPwd=" + java.net.URLEncoder.encode(trimmed, "UTF-8")
+            )
+        }
+
+        internal fun isXgwxAuthenticatedPage(finalUrl: String, html: String): Boolean {
+            if (finalUrl.contains("authserver.ecut.edu.cn", ignoreCase = true)) return false
+            if (finalUrl.contains("login", ignoreCase = true) && !finalUrl.contains("index.jsp")) return false
+            if (html.contains("统一身份认证") && html.contains("password", ignoreCase = true)) return false
+            return finalUrl.contains("xgwx.ecut.edu.cn", ignoreCase = true)
+        }
+
         /** xgwx 接口要求补零日期 yyyy-MM-dd，否则每月 1~9 号会返回空。 */
         internal fun formatQueryDate(date: LocalDate): String =
             date.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
         internal fun extractUserId(html: String): String? {
+            val invalidPlaceholders = setOf("null", "undefined", "none", "false", "true")
             val patterns = listOf(
                 Regex("""userid\s*=\s*['"]?([A-Za-z0-9_-]{4,32})""", RegexOption.IGNORE_CASE),
                 Regex(""""userid"\s*:\s*"([A-Za-z0-9_-]{4,32})"""", RegexOption.IGNORE_CASE)
             )
             return patterns.firstNotNullOfOrNull { regex ->
-                regex.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+                regex.find(html)?.groupValues?.getOrNull(1)
+                    ?.takeIf { it.isNotBlank() && it.lowercase() !in invalidPlaceholders }
             }
         }
 

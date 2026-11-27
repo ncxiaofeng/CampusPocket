@@ -20,6 +20,7 @@ import com.ecut.campuspocket.data.remote.huilife.HuiLifeDeviceStatus
 import com.ecut.campuspocket.data.remote.huilife.HuiLifePlatform
 import com.ecut.campuspocket.data.repository.HuiLifeDashboard
 import com.ecut.campuspocket.data.repository.HuiLifeRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class HuiLifeViewModel(
@@ -48,6 +49,12 @@ class HuiLifeViewModel(
         private set
     var confirmDevice by mutableStateOf<HuiLifeDevice?>(null)
         private set
+    var confirmStopDevice by mutableStateOf<HuiLifeDevice?>(null)
+        private set
+    /** 本次进程内由本机亲手点启动成功的设备及其启动时间戳；仅用于安全判断可停止的自己设备。 */
+    var startedByMeAt by mutableStateOf<Map<String, Long>>(emptyMap())
+        private set
+    private var appSessionUid: String = ""
     var loginFormVisible by mutableStateOf(false)
         private set
     var scannedDevices by mutableStateOf(preferences.huiLifeScannedDevices)
@@ -131,6 +138,16 @@ class HuiLifeViewModel(
     fun canStart(deviceId: String): Boolean =
         appLoggedIn && isScanned(deviceId) && (statusById[deviceId]?.canStart ?: true)
 
+    /** 仅允许停止确认由本人启动且当前正在运行中的设备，绝不误停他人设备。 */
+    fun canStop(deviceId: String, nowMillis: Long = System.currentTimeMillis()): Boolean =
+        shouldAllowStop(
+            appLoggedIn = appLoggedIn,
+            status = statusById[deviceId],
+            startedByMeMillis = startedByMeAt[deviceId],
+            myUid = appSessionUid,
+            nowMillis = nowMillis
+        )
+
     private val probedInfoIds = mutableSetOf<String>()
 
     fun refreshStatuses() {
@@ -192,6 +209,11 @@ class HuiLifeViewModel(
                     }
                 }
                 statusById = updated
+                startedByMeAt = reconcileStartedByMe(
+                    startedByMeAt = startedByMeAt,
+                    statuses = updated,
+                    nowMillis = System.currentTimeMillis()
+                )
             } finally {
                 statusRefreshing = false
             }
@@ -274,7 +296,10 @@ class HuiLifeViewModel(
             loading = true
             var succeeded = false
             repository.login(phone, smsCode.trim(), platform).fold(
-                onSuccess = {
+                onSuccess = { session ->
+                    if (platform == HuiLifePlatform.APP && session.uid.isNotBlank()) {
+                        appSessionUid = session.uid
+                    }
                     accountLoggedIn = repository.hasAccount()
                     appLoggedIn = repository.hasApp()
                     smsSent = false
@@ -283,8 +308,13 @@ class HuiLifeViewModel(
                     captcha = null
                     loginFormVisible = false
                     succeeded = true
+                    val hasAppControlConfig = AppContainer.runtimeConfig.get().hasHuiLife
                     message = if (platform == HuiLifePlatform.ACCOUNT && !appLoggedIn) {
-                        "查询登录成功。需要一键启动设备时，请切换「设备控制」再登录一次。"
+                        if (hasAppControlConfig) {
+                            "查询登录成功。需要一键启动设备时，请切换「设备控制」再登录一次。"
+                        } else {
+                            "查询登录成功，已同步钱包余额与设备状态。"
+                        }
                     } else if (platform == HuiLifePlatform.APP) {
                         "设备控制登录成功，可以一键启动设备了"
                     } else {
@@ -466,17 +496,61 @@ class HuiLifeViewModel(
         confirmDevice = null
         viewModelScope.launch {
             loading = true
+            var started = false
             repository.startDevice(device.id).fold(
-                onSuccess = { message = "${device.name}：$it" },
+                onSuccess = {
+                    started = true
+                    startedByMeAt = startedByMeAt + (device.id to System.currentTimeMillis())
+                    message = "${device.name}：$it（使用完毕可点「停止」）"
+                },
                 onFailure = { message = "启动失败：${it.message}" }
             )
             loading = false
             refreshStatuses()
+            if (started) {
+                delay(1500)
+                refreshStatuses()
+            }
         }
     }
 
     fun cancelStart() {
         confirmDevice = null
+    }
+
+    fun askStop(device: HuiLifeDevice) {
+        if (!canStop(device.id)) {
+            message = "只支持停止由你本人启动且正在使用中的设备"
+            return
+        }
+        confirmStopDevice = device
+    }
+
+    fun cancelStop() {
+        confirmStopDevice = null
+    }
+
+    fun confirmStop() {
+        val device = confirmStopDevice ?: return
+        confirmStopDevice = null
+        if (!canStop(device.id)) {
+            message = "设备状态已变化，无法停止"
+            return
+        }
+        viewModelScope.launch {
+            loading = true
+            repository.stopDevice(device.id).fold(
+                onSuccess = {
+                    startedByMeAt = startedByMeAt - device.id
+                    message = "${device.name}：$it"
+                },
+                onFailure = { message = "停止失败：${it.message}" }
+            )
+            loading = false
+            refreshStatuses()
+            delay(1500)
+            refresh()
+        }
     }
 
     fun openLogin(platform: HuiLifePlatform) {
@@ -492,6 +566,10 @@ class HuiLifeViewModel(
     fun logout(platform: HuiLifePlatform) {
         viewModelScope.launch {
             runCatching { repository.logout(platform) }
+            if (platform == HuiLifePlatform.APP) {
+                startedByMeAt = emptyMap()
+                appSessionUid = ""
+            }
             accountLoggedIn = repository.hasAccount()
             appLoggedIn = repository.hasApp()
             if (!accountLoggedIn && !appLoggedIn) dashboard = null
@@ -504,6 +582,53 @@ class HuiLifeViewModel(
     }
 
     companion object {
+        private const val SELF_START_TTL_MS = 30 * 60 * 1000L
+        private const val SELF_START_GRACE_MS = 15 * 1000L
+
+        /**
+         * 判断是否允许显示/执行「停止」：
+         * 1. 必须已登录设备控制端（APP token）；
+         * 2. 设备当前正在运行（isRunning，或在刚点启动的 15 秒过渡期内）；
+         * 3. 归属确认：本机 30 分钟内亲手点过启动，或服务端状态返回 usingUserId == 当前 uid。
+         */
+        internal fun shouldAllowStop(
+            appLoggedIn: Boolean,
+            status: HuiLifeDeviceStatus?,
+            startedByMeMillis: Long?,
+            myUid: String = "",
+            nowMillis: Long = System.currentTimeMillis()
+        ): Boolean {
+            if (!appLoggedIn) return false
+            val startedRecently = startedByMeMillis != null &&
+                nowMillis >= startedByMeMillis &&
+                nowMillis - startedByMeMillis <= SELF_START_TTL_MS
+            val inStartupGrace = startedByMeMillis != null &&
+                nowMillis >= startedByMeMillis &&
+                nowMillis - startedByMeMillis <= SELF_START_GRACE_MS
+            val matchedServerOwner = myUid.isNotBlank() &&
+                status?.usingUserId?.isNotBlank() == true &&
+                status.usingUserId == myUid
+            if (status == null) return inStartupGrace
+            if (!status.isRunning) return false
+            return startedRecently || matchedServerOwner
+        }
+
+        /** 轮询状态后清理已自动结束或超时的本机启动记录。 */
+        internal fun reconcileStartedByMe(
+            startedByMeAt: Map<String, Long>,
+            statuses: Map<String, HuiLifeDeviceStatus>,
+            nowMillis: Long = System.currentTimeMillis()
+        ): Map<String, Long> {
+            if (startedByMeAt.isEmpty()) return startedByMeAt
+            return startedByMeAt.filter { (id, startedAt) ->
+                val age = nowMillis - startedAt
+                if (age < 0L || age > SELF_START_TTL_MS) return@filter false
+                val status = statuses[id] ?: return@filter true
+                // 刚启动 15 秒内允许状态短暂仍为 99，超过后只要已空闲/离线/禁用即清除。
+                if (status.isRunning) true else age <= SELF_START_GRACE_MS
+            }
+        }
+
         internal fun isGenericPlaceholderName(text: String): Boolean {
             val cleaned = text.trim()
             return cleaned.isBlank() ||

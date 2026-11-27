@@ -38,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,7 +50,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.data.remote.ujing.UjingCampus
 import com.ecut.campuspocket.data.remote.ujing.UjingDeviceTag
 import com.ecut.campuspocket.data.remote.ujing.UjingOrder
@@ -70,11 +75,20 @@ import java.util.Locale
 @Composable
 fun UjingScreen(
     onBack: () -> Unit,
+    onOpenWebLogin: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: UjingViewModel = viewModel(factory = UjingViewModel.Factory)
 ) {
     val loggedIn = viewModel.hasSession && !viewModel.needsLogin
     val context = LocalContext.current
+    val configVersion by AppContainer.runtimeConfig.version.collectAsStateWithLifecycle()
+    val hasUjingConfig = remember(configVersion) {
+        AppContainer.runtimeConfig.get().hasUjing
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.syncSessionOnResume()
+    }
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -122,6 +136,8 @@ fun UjingScreen(
             UjingLoginContent(
                 isBusy = viewModel.isBusy,
                 message = viewModel.message,
+                hasNativeSmsConfig = hasUjingConfig,
+                onOpenWebLogin = onOpenWebLogin,
                 onSendCaptcha = viewModel::sendCaptcha,
                 onLogin = viewModel::login
             )
@@ -201,9 +217,12 @@ private fun UjingTopBar(
 private fun UjingLoginContent(
     isBusy: Boolean,
     message: String?,
+    hasNativeSmsConfig: Boolean,
+    onOpenWebLogin: () -> Unit,
     onSendCaptcha: (String) -> Unit,
     onLogin: (String, String) -> Unit
 ) {
+    val context = LocalContext.current
     var mobile by rememberSaveable { mutableStateOf("") }
     var captcha by rememberSaveable { mutableStateOf("") }
 
@@ -219,37 +238,15 @@ private fun UjingLoginContent(
                         IconBadge("洗", ChartPrimary)
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text("登录 U净", style = MaterialTheme.typography.titleMedium)
+                            Text("登录 U净（免配置）", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "手机号 + 短信验证码；只用于查询洗衣房状态",
+                                "通过 U净 官方网页验证手机号，登录后自动回到原生查询页",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    Spacer(Modifier.height(16.dp))
-                    OutlinedTextField(
-                        value = mobile,
-                        onValueChange = { value ->
-                            mobile = value.filter { it.isDigit() }.take(11)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("手机号") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = captcha,
-                        onValueChange = { value ->
-                            captcha = value.filter { it.isDigit() }.take(6)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("验证码") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                    if (message != null) {
+                    if (message != null && !hasNativeSmsConfig) {
                         Spacer(Modifier.height(10.dp))
                         Text(
                             text = message,
@@ -258,20 +255,74 @@ private fun UjingLoginContent(
                         )
                     }
                     Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = { onSendCaptcha(mobile) },
-                            enabled = !isBusy,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("获取验证码")
+                    Button(
+                        onClick = onOpenWebLogin,
+                        enabled = !isBusy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("通过 U净官方网页登录（推荐）")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { openUjingAlipay(context, "pages/index/index") },
+                        contentPadding = PaddingValues(horizontal = 0.dp)
+                    ) {
+                        Text("或在支付宝打开 U净")
+                    }
+                }
+            }
+        }
+        if (hasNativeSmsConfig) {
+            item {
+                AppCard {
+                    Column {
+                        Text("原生短信登录（已配置参数）", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = mobile,
+                            onValueChange = { value ->
+                                mobile = value.filter { it.isDigit() }.take(11)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("手机号") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = captcha,
+                            onValueChange = { value ->
+                                captcha = value.filter { it.isDigit() }.take(6)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("验证码") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                        if (message != null) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
-                        Button(
-                            onClick = { onLogin(mobile, captcha) },
-                            enabled = !isBusy,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("登录")
+                        Spacer(Modifier.height(14.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { onSendCaptcha(mobile) },
+                                enabled = !isBusy,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("获取验证码")
+                            }
+                            Button(
+                                onClick = { onLogin(mobile, captcha) },
+                                enabled = !isBusy,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("登录")
+                            }
                         }
                     }
                 }
