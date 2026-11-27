@@ -43,6 +43,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>仅用于本地离线扫描慧生活798 设备二维码与高级配置二维码，不会上传任何照片或视频。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>用于在校园网环境下直连学校内网教务系统（172.20.130.13），查询课表、成绩、考试、空闲教室与通知公告。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

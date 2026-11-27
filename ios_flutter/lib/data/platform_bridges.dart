@@ -77,3 +77,24 @@ class DeviceLocationBridge {
     }
   }
 }
+
+/// iOS 原生 AVFoundation 离线二维码扫描器桥接。
+class QrScannerBridge {
+  static const MethodChannel _channel =
+      MethodChannel('com.ecut.campuspocket/qr_scanner');
+
+  static Future<String?> scanQr({String title = '扫描二维码'}) async {
+    try {
+      final result = await _channel.invokeMethod<String>(
+        'scanQr',
+        {'title': title},
+      );
+      if (result == null || result.trim().isEmpty) return null;
+      return result.trim();
+    } on MissingPluginException {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+}

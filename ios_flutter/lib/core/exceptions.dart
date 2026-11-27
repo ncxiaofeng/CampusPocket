@@ -19,3 +19,35 @@ class ProxySessionRequiredException implements Exception {
   @override
   String toString() => message;
 }
+
+/// 运行期高级配置缺失异常。
+class ConfigurationRequiredException implements Exception {
+  final String message;
+
+  const ConfigurationRequiredException([
+    this.message = '缺少必要参数，请前往「更多 → 高级配置」导入',
+  ]);
+
+  @override
+  String toString() => message;
+}
+
+/// 学习通登录态失效异常。
+class ChaoxingSessionExpiredException implements Exception {
+  final String message;
+
+  const ChaoxingSessionExpiredException([this.message = '学习通登录已过期，请重新登录']);
+
+  @override
+  String toString() => message;
+}
+
+/// 慧生活798 Token 失效异常。
+class HuiLifeTokenExpiredException implements Exception {
+  final String message;
+
+  const HuiLifeTokenExpiredException([this.message = '慧生活登录已过期，请重新登录']);
+
+  @override
+  String toString() => message;
+}

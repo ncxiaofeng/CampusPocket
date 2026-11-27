@@ -267,6 +267,30 @@ class AuthRepository {
     await _persist();
   }
 
+  /// 保存不透明 Token（U净 JWT / 慧生活798 Token），不参与 CookieJar。
+  Future<void> saveOpaqueToken({
+    required String systemId,
+    required String domain,
+    required String token,
+  }) async {
+    if (token.trim().isEmpty) return;
+    await _ensureLoaded();
+    _credentials[systemId] = AuthCredential(
+      systemId: systemId,
+      domain: domain,
+      cookie: token.trim(),
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _persist();
+  }
+
+  Future<void> clearCookiesForHost(String host) async {
+    if (host.trim().isEmpty) return;
+    await _ensureLoaded();
+    _cookies.removeWhere((c) => c.domain.toLowerCase() == host.toLowerCase());
+    await _persist();
+  }
+
   Future<void> clearAll() async {
     _loaded = true;
     _credentials.clear();

@@ -4,10 +4,11 @@ import '../../app_state.dart';
 import '../../core/class_times.dart';
 import '../../data/models.dart';
 import '../../network/campus_network_status.dart';
+import '../../network/electricity_client.dart';
 import '../../network/weather_client.dart';
 import '../theme/glass_theme.dart';
 
-/// 首页：今日课程、校园天气（Open-Meteo + 位置选择）、校园卡概览与快捷服务。
+/// 首页：今日课程、校园天气、电费卡片（配置时显示）、学习通待办、慧生活798、校园卡与快捷服务。
 class TodayScreen extends StatelessWidget {
   final CampusAppState appState;
   final VoidCallback onOpenLogin;
@@ -19,6 +20,10 @@ class TodayScreen extends StatelessWidget {
   final VoidCallback onOpenClassrooms;
   final VoidCallback onOpenNotices;
   final VoidCallback onOpenLibrary;
+  final VoidCallback onOpenElectricity;
+  final VoidCallback onOpenUjing;
+  final VoidCallback onOpenHuiLife;
+  final VoidCallback onOpenChaoxing;
   final VoidCallback onSync;
 
   const TodayScreen({
@@ -33,6 +38,10 @@ class TodayScreen extends StatelessWidget {
     required this.onOpenClassrooms,
     required this.onOpenNotices,
     required this.onOpenLibrary,
+    required this.onOpenElectricity,
+    required this.onOpenUjing,
+    required this.onOpenHuiLife,
+    required this.onOpenChaoxing,
     required this.onSync,
   });
 
@@ -61,6 +70,15 @@ class TodayScreen extends StatelessWidget {
         await appState.refreshWeather(force: true);
         if (appState.hasCasMaster) {
           await appState.refreshCard(silent: true);
+          if (appState.runtimeConfig.hasElectricity) {
+            await appState.refreshElectricity(silent: true);
+          }
+        }
+        if (appState.hasChaoxingSession) {
+          await appState.refreshChaoxing(silent: true);
+        }
+        if (appState.hasHuiLifeAccount || appState.hasHuiLifeApp) {
+          await appState.refreshHuiLife(silent: true);
         }
       },
       child: ListView(
@@ -93,7 +111,7 @@ class TodayScreen extends StatelessWidget {
                   : Icons.wifi_off_rounded,
               text: appState.hasProxySession
                   ? '当前在校外 · 已就绪 WebVPN 教务代理，可直接同步'
-                  : '未连接校园网 · 可打开零信任门户走 WebVPN 代理同步教务',
+                  : '未检测到校园网内网（如已连校园网请先允许“本地网络”权限并点右上角重测）',
               actionLabel: '零信任门户',
               onAction: onOpenPortal,
             ),
@@ -102,6 +120,14 @@ class TodayScreen extends StatelessWidget {
           _buildTodayCoursesCard(context, todayCourses, week),
           const SizedBox(height: 14),
           _buildWeatherCard(context),
+          if (appState.runtimeConfig.hasElectricity) ...[
+            const SizedBox(height: 14),
+            _buildElectricityCard(context),
+          ],
+          const SizedBox(height: 14),
+          _buildChaoxingCard(context),
+          const SizedBox(height: 14),
+          _buildHuiLifeCard(context),
           const SizedBox(height: 14),
           _buildCampusCardSummary(context),
           const SizedBox(height: 14),
@@ -121,9 +147,9 @@ class TodayScreen extends StatelessWidget {
     final netLabel = switch (appState.netState) {
       CampusNetworkState.onCampus => '校园网',
       CampusNetworkState.offCampus =>
-        appState.hasProxySession ? 'WebVPN 代理' : '校外网络',
+        appState.hasProxySession ? 'WebVPN 代理' : '点此重测校园网',
       CampusNetworkState.checking => '检测中',
-      CampusNetworkState.unknown => '网络未知',
+      CampusNetworkState.unknown => '检测网络',
     };
 
     return Row(
@@ -349,56 +375,216 @@ class TodayScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildElectricityCard(BuildContext context) {
+    final snap = appState.electricity;
+    final today = DateTime.now();
+    final yKey = ElectricityClient.formatQueryDate(
+      DateTime(today.year, today.month, today.day)
+          .subtract(const Duration(days: 1)),
+    );
+    final yesterday = snap?.dailyUsage
+        .where((e) => e.date == yKey)
+        .map((e) => e.kwh)
+        .firstOrNull;
+
+    return GlassCard(
+      onTap: onOpenElectricity,
+      child: Row(
+        children: [
+          const IconBadge(
+            icon: Icons.bolt_rounded,
+            color: Color(0xFFF59E0B),
+            size: 38,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '宿舍电费',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: GlassColors.ink(context),
+                  ),
+                ),
+                Text(
+                  yesterday != null
+                      ? '昨日用电 ${yesterday.toStringAsFixed(2)} 度'
+                      : '点击查看余额与 30 天柱状图',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: GlassColors.muted(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            snap?.balance != null ? '¥${snap!.balance!.toStringAsFixed(2)}' : '--',
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFFF59E0B),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChaoxingCard(BuildContext context) {
+    final snap = appState.chaoxing;
+    final pendingWorks = snap?.pendingWorkCount ?? 0;
+    final pendingExams = snap?.pendingExamCount ?? 0;
+    final signs = snap?.signs.length ?? 0;
+    return GlassCard(
+      onTap: onOpenChaoxing,
+      child: Row(
+        children: [
+          const IconBadge(
+            icon: Icons.assignment_outlined,
+            color: Color(0xFF6366F1),
+            size: 38,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '学习通待办',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: GlassColors.ink(context),
+                  ),
+                ),
+                Text(
+                  !appState.hasChaoxingSession
+                      ? '点击登录查看签到、作业与考试'
+                      : '签到 $signs · 待办作业 $pendingWorks · 考试 $pendingExams',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: GlassColors.muted(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (signs > 0)
+            Chip(
+              label: Text('$signs 签到', style: const TextStyle(fontSize: 11)),
+              backgroundColor: GlassColors.danger.withValues(alpha: 0.16),
+              visualDensity: VisualDensity.compact,
+            )
+          else
+            const Icon(Icons.chevron_right_rounded),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHuiLifeCard(BuildContext context) {
+    final wallet = appState.huiLifeWallet;
+    final onlineCount =
+        appState.huiLifeStatuses.values.where((s) => s.canStart).length;
+    return GlassCard(
+      onTap: onOpenHuiLife,
+      child: Row(
+        children: [
+          const IconBadge(
+            icon: Icons.water_drop_outlined,
+            color: Color(0xFF0EA5E9),
+            size: 38,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '慧生活798',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: GlassColors.ink(context),
+                  ),
+                ),
+                Text(
+                  wallet == null
+                      ? '免配置查钱包余额与设备状态'
+                      : '设备 ${appState.huiLifeDevices.length} 台 · 在线 $onlineCount 台',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: GlassColors.muted(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (wallet != null)
+            Text(
+              '¥${wallet.balance.toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0EA5E9),
+              ),
+            )
+          else
+            const Icon(Icons.chevron_right_rounded),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCampusCardSummary(BuildContext context) {
     final overview = appState.cardOverview;
     return GlassCard(
       onTap: onOpenCard,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const IconBadge(
-                icon: Icons.credit_card_rounded,
-                color: Color(0xFF0D9488),
-                size: 36,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '校园卡',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: GlassColors.ink(context),
-                      ),
-                    ),
-                    Text(
-                      overview == null
-                          ? '点击进入查看余额与本月流水'
-                          : '本月消费 ¥${overview.monthSpend.toStringAsFixed(2)}（${overview.monthSpendCount}笔） · 充值 ¥${overview.monthRecharge.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: GlassColors.muted(context),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (overview != null)
+          const IconBadge(
+            icon: Icons.credit_card_rounded,
+            color: Color(0xFF0D9488),
+            size: 38,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  '¥${overview.balance.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0D9488),
+                  '校园卡',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: GlassColors.ink(context),
                   ),
                 ),
-            ],
+                Text(
+                  overview == null
+                      ? '点击进入查看余额与本月流水'
+                      : '本月消费 ¥${overview.monthSpend.toStringAsFixed(2)}（${overview.monthSpendCount}笔） · 充值 ¥${overview.monthRecharge.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: GlassColors.muted(context),
+                  ),
+                ),
+              ],
+            ),
           ),
+          if (overview != null)
+            Text(
+              '¥${overview.balance.toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0D9488),
+              ),
+            ),
         ],
       ),
     );
@@ -411,14 +597,17 @@ class TodayScreen extends StatelessWidget {
       ('空闲教室', Icons.meeting_room_outlined, const Color(0xFF3B82F6), onOpenClassrooms),
       ('通知公告', Icons.campaign_outlined, const Color(0xFFF97316), onOpenNotices),
       ('图书馆空位', Icons.menu_book_rounded, const Color(0xFF8B5CF6), onOpenLibrary),
-      ('零信任门户', Icons.vpn_lock_rounded, GlassColors.primary, onOpenPortal),
+      ('U净洗衣', Icons.local_laundry_service_rounded, const Color(0xFFEC4899), onOpenUjing),
+      ('宿舍电费', Icons.bolt_rounded, const Color(0xFFF59E0B), onOpenElectricity),
+      ('慧生活798', Icons.water_drop_outlined, const Color(0xFF0EA5E9), onOpenHuiLife),
+      ('学习通', Icons.assignment_outlined, GlassColors.primary, onOpenChaoxing),
     ];
     return GlassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '常用服务',
+            '全部校园服务',
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
@@ -446,7 +635,7 @@ class TodayScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        IconBadge(icon: item.$2, color: item.$3, size: 38),
+                        IconBadge(icon: item.$2, color: item.$3, size: 36),
                         const SizedBox(height: 6),
                         Text(
                           item.$1,

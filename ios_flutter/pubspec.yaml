@@ -2,12 +2,13 @@ name: campuspocket_ios
 description: "冻小梨 iOS 自签版（纯本地、无后端、支持免费 Apple ID 手动自签）"
 publish_to: 'none'
 
-version: 0.6.4+17
+version: 0.6.5+18
 
 environment:
   sdk: ^3.13.0
 
 dependencies:
+  crypto: ^3.0.6
   flutter:
     sdk: flutter
   flutter_secure_storage: ^9.2.4

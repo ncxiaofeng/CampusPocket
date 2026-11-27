@@ -1,68 +1,130 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/campus_endpoints.dart';
+import 'core/coordinate_converter.dart';
 import 'core/exceptions.dart';
 import 'core/semester_config.dart';
 import 'data/auth_repository.dart';
 import 'data/models.dart';
 import 'data/platform_bridges.dart';
+import 'data/runtime_config.dart';
 import 'data/secure_vault.dart';
 import 'network/campus_card_client.dart';
 import 'network/campus_cookie_jar.dart';
 import 'network/campus_http_client.dart';
 import 'network/campus_network_status.dart';
+import 'network/cas_auto_login.dart';
 import 'network/cas_sso_manager.dart';
+import 'network/chaoxing_client.dart';
+import 'network/electricity_client.dart';
+import 'network/huilife_client.dart';
 import 'network/jw_adapter.dart';
 import 'network/library_seat_client.dart';
+import 'network/ujing_client.dart';
 import 'network/update_checker.dart';
 import 'network/weather_client.dart';
 
-/// 全局应用状态容器：统一管理加密登录态、本地缓存与各业务同步。
+/// 全局应用状态容器：统一管理加密登录态、运行期配置、本地缓存与全量校园业务。
 class CampusAppState extends ChangeNotifier {
   CampusAppState({SecureVault? vault})
-      : authRepository = AuthRepository(vault ?? KeychainSecureVault()) {
+      : _vault = vault ?? KeychainSecureVault() {
+    authRepository = AuthRepository(_vault);
+    runtimeConfigStore = RuntimeConfigStore(_vault);
+    credentialVault = CredentialVault(_vault);
     cookieJar = CampusCookieJar(authRepository);
     httpClient = CampusHttpClient(cookieJar: cookieJar);
     networkStatus = CampusNetworkStatus(httpClient);
     ssoManager = CasSsoManager(authRepository, httpClient);
+    casAutoLogin = CasAutoLogin(
+      httpClient: httpClient,
+      authRepository: authRepository,
+    );
+    remoteClaimClient = RemoteConfigClaimClient(httpClient);
     jwAdapter = JwAdapter(
       httpClient: httpClient,
       ssoManager: ssoManager,
       baseUrlsProvider: _resolveJwBaseUrls,
+      onDirectReachable: _markOnCampusFromDirectSuccess,
+      sessionRecovery: tryAutoRecoverCas,
     );
     cardClient = CampusCardClient(
       httpClient: httpClient,
       ssoManager: ssoManager,
+    );
+    electricityClient = ElectricityClient(
+      httpClient: httpClient,
+      operatorPwdProvider: () => runtimeConfig.electricityOperatorPwd,
+      ssoManager: ssoManager,
+      clearSessionCookies: () =>
+          authRepository.clearCookiesForHost('xgwx.ecut.edu.cn'),
+      onSessionRecovery: tryAutoRecoverCas,
+    );
+    ujingClient = UjingClient(
+      httpClient: httpClient,
+      hmacKeyProvider: () => runtimeConfig.ujingHmacKey,
+    );
+    huiLifeClient = HuiLifeClient(
+      httpClient: httpClient,
+      appSignSaltProvider: () => runtimeConfig.huilifeAppSignSalt,
     );
     libraryClient = LibrarySeatClient(httpClient: httpClient);
     weatherClient = WeatherClient(httpClient);
     updateChecker = UpdateChecker(httpClient);
   }
 
-  static const String appVersion = '0.6.4';
-  static const int appBuildNumber = 17;
+  static const String appVersion = '0.6.5';
+  static const int appBuildNumber = 18;
 
   static const String _kCoursesCache = 'cp_cache_courses_v1';
   static const String _kGradesCache = 'cp_cache_grades_v1';
   static const String _kExamsCache = 'cp_cache_exams_v1';
+  static const String _kElectricityCache = 'cp_cache_electricity_v1';
   static const String _kWeatherPref = 'cp_pref_weather_loc_v1';
   static const String _kLastSyncTime = 'cp_last_sync_at_v1';
+  static const String _kChaoxingUid = 'cp_chaoxing_unique_id_v1';
+  static const String _kHuiLifeScanned = 'cp_huilife_scanned_devices_v1';
+  static const String _kHuiLifeUid = 'cp_huilife_uid_v1';
 
-  final AuthRepository authRepository;
+  final SecureVault _vault;
+  late final AuthRepository authRepository;
+  late final RuntimeConfigStore runtimeConfigStore;
+  late final CredentialVault credentialVault;
   late final CampusCookieJar cookieJar;
   late final CampusHttpClient httpClient;
   late final CampusNetworkStatus networkStatus;
   late final CasSsoManager ssoManager;
+  late final CasAutoLogin casAutoLogin;
+  late final RemoteConfigClaimClient remoteClaimClient;
   late final JwAdapter jwAdapter;
   late final CampusCardClient cardClient;
+  late final ElectricityClient electricityClient;
+  late final UjingClient ujingClient;
+  late final HuiLifeClient huiLifeClient;
   late final LibrarySeatClient libraryClient;
   late final WeatherClient weatherClient;
   late final UpdateChecker updateChecker;
+  ChaoxingClient? _chaoxingClient;
+
+  ChaoxingClient get chaoxingClient {
+    _chaoxingClient ??= ChaoxingClient(
+      httpClient: httpClient,
+      authRepository: authRepository,
+      uniqueId: _chaoxingUniqueId,
+    );
+    return _chaoxingClient!;
+  }
 
   SharedPreferences? _prefs;
+  String _chaoxingUniqueId = 'cpios000001';
+
+  // 运行期配置与自动登录
+  RuntimeConfig get runtimeConfig => runtimeConfigStore.current;
+  bool autoLoginEnabled = false;
+  String autoLoginUsername = '';
 
   // 网络与会话状态
   CampusNetworkState netState = CampusNetworkState.unknown;
@@ -70,17 +132,22 @@ class CampusAppState extends ChangeNotifier {
   bool hasJwSession = false;
   bool hasProxySession = false;
   bool hasVpnSession = false;
+  bool hasUjingSession = false;
+  bool hasChaoxingSession = false;
+  bool hasHuiLifeAccount = false;
+  bool hasHuiLifeApp = false;
   bool sessionExpired = false;
   String? sessionExpiredMessage;
   int? lastSyncAt;
 
-  // 业务数据状态
+  // 教务数据
   List<JwCourse> courses = const [];
   List<JwGrade> grades = const [];
   List<JwExam> exams = const [];
   bool syncingJw = false;
   String? jwError;
 
+  // 校园卡数据
   CampusCardOverview? cardOverview;
   List<CampusCardBill> cardBills = const [];
   int cardBillsTotal = 0;
@@ -88,11 +155,42 @@ class CampusAppState extends ChangeNotifier {
   bool loadingCard = false;
   String? cardError;
 
+  // 电费数据
+  ElectricitySnapshot? electricity;
+  bool loadingElectricity = false;
+  String? electricityError;
+
+  // U净数据
+  List<UjingStore> ujingStores = const [];
+  List<UjingOrder> ujingRunning = const [];
+  List<UjingOrder> ujingHistory = const [];
+  (String storeId, String storeName)? ujingRecentStore;
+  String ujingCampusPref = 'auto'; // auto | guanglan | qinglan | fuzhou
+  String ujingLocationLabel = '当前位置';
+  bool loadingUjing = false;
+  String? ujingError;
+
+  // 慧生活798 数据
+  HuiLifeWallet? huiLifeWallet;
+  List<HuiLifeDevice> huiLifeDevices = const [];
+  List<HuiLifeBill> huiLifeBills = const [];
+  final Map<String, HuiLifeDeviceStatus> huiLifeStatuses = {};
+  final Set<String> huiLifeScannedIds = {};
+  final Map<String, int> huiLifeLocalStartedAt = {};
+  String huiLifeUid = '';
+  bool loadingHuiLife = false;
+  String? huiLifeError;
+
+  // 学习通数据
+  ChaoxingSnapshot? chaoxing;
+  bool loadingChaoxing = false;
+  String? chaoxingError;
+
+  // 天气 & 图书馆
   WeatherSnapshot? weather;
-  String weatherLocationPref = 'auto'; // auto | guanglan | qinglan | fuzhou
+  String weatherLocationPref = 'auto';
   bool loadingWeather = false;
   String? weatherError;
-
   LibrarySeatSnapshot? librarySnapshot;
   bool loadingLibrary = false;
   String? libraryError;
@@ -101,15 +199,27 @@ class CampusAppState extends ChangeNotifier {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    await runtimeConfigStore.load();
+    final autoCreds = await credentialVault.load();
+    autoLoginEnabled = autoCreds?.enabled == true;
+    autoLoginUsername = autoCreds?.username ?? '';
     _loadCaches();
     await refreshSessionFlags();
     notifyListeners();
 
-    // 启动后异步探测校园网并刷新天气与校园卡（若已有登录态）。
     refreshNetwork();
     refreshWeather();
     if (hasCasMaster) {
       refreshCard(silent: true);
+      if (runtimeConfig.hasElectricity) {
+        refreshElectricity(silent: true);
+      }
+    }
+    if (hasChaoxingSession) {
+      refreshChaoxing(silent: true);
+    }
+    if (hasHuiLifeAccount || hasHuiLifeApp) {
+      refreshHuiLife(silent: true);
     }
   }
 
@@ -118,6 +228,18 @@ class CampusAppState extends ChangeNotifier {
     if (prefs == null) return;
     weatherLocationPref = prefs.getString(_kWeatherPref) ?? 'auto';
     lastSyncAt = prefs.getInt(_kLastSyncTime);
+    huiLifeUid = prefs.getString(_kHuiLifeUid) ?? '';
+    huiLifeScannedIds
+      ..clear()
+      ..addAll(prefs.getStringList(_kHuiLifeScanned) ?? const []);
+
+    var uid = prefs.getString(_kChaoxingUid);
+    if (uid == null || uid.isEmpty) {
+      final rnd = Random.secure();
+      uid = List.generate(16, (_) => rnd.nextInt(16).toRadixString(16)).join();
+      prefs.setString(_kChaoxingUid, uid);
+    }
+    _chaoxingUniqueId = uid;
 
     final rawCourses = prefs.getString(_kCoursesCache);
     if (rawCourses != null && rawCourses.isNotEmpty) {
@@ -148,17 +270,37 @@ class CampusAppState extends ChangeNotifier {
             .toList();
       } catch (_) {}
     }
+
+    final rawElec = prefs.getString(_kElectricityCache);
+    if (rawElec != null && rawElec.isNotEmpty) {
+      try {
+        electricity = ElectricitySnapshot.fromJson(
+          jsonDecode(rawElec) as Map<String, dynamic>,
+        );
+      } catch (_) {}
+    }
   }
 
   Future<void> refreshSessionFlags() async {
     hasCasMaster = await ssoManager.hasMasterSession();
-    final jwCookies = await authRepository.loadCookiesForHost('172.20.130.13');
-    hasJwSession = jwCookies.isNotEmpty;
-    final proxyCookies =
-        await authRepository.loadCookiesForHost(CampusEndpoints.jwProxyHost);
-    hasProxySession = proxyCookies.isNotEmpty;
-    final vpnCred = await authRepository.getCredential(CampusEndpoints.systemCas);
-    hasVpnSession = vpnCred != null;
+    hasJwSession =
+        (await authRepository.loadCookiesForHost('172.20.130.13')).isNotEmpty;
+    hasProxySession =
+        (await authRepository.loadCookiesForHost(CampusEndpoints.jwProxyHost))
+            .isNotEmpty;
+    hasVpnSession =
+        (await authRepository.getCredential(CampusEndpoints.systemCas)) != null;
+    hasUjingSession =
+        (await authRepository.getCredential(CampusEndpoints.systemUjing)) !=
+            null;
+    hasChaoxingSession = await chaoxingClient.hasSession();
+    hasHuiLifeAccount = (await authRepository
+            .getCredential(CampusEndpoints.systemHuiLifeAccount)) !=
+        null;
+    hasHuiLifeApp =
+        (await authRepository.getCredential(CampusEndpoints.systemHuiLifeApp)) !=
+            null;
+
     if (hasCasMaster) {
       sessionExpired = false;
       sessionExpiredMessage = null;
@@ -175,10 +317,37 @@ class CampusAppState extends ChangeNotifier {
     return onCampus;
   }
 
+  void _markOnCampusFromDirectSuccess() {
+    if (netState != CampusNetworkState.onCampus) {
+      netState = CampusNetworkState.onCampus;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> tryAutoRecoverCas() async {
+    final creds = await credentialVault.load();
+    if (creds == null || !creds.enabled) return false;
+    try {
+      await casAutoLogin.login(creds.username, creds.password);
+      await refreshSessionFlags();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 彻底修复真机校内误报零信任门户的问题：
+  /// 1. 如果尚未明确为校内，同步前先实时复探一次；
+  /// 2. 绝不直接一刀切拒绝直连——即使首次因 iOS 本地网络弹窗未放行被判为校外，
+  ///    仍把直连 `172.20.130.13` 放进候选（若已有代理会话则校外时优先代理、回退直连），
+  ///    直连只要能连通会自动回标 `onCampus`。
   Future<List<JwBaseUrl>> _resolveJwBaseUrls() async {
-    final proxyCookies =
-        await authRepository.loadCookiesForHost(CampusEndpoints.jwProxyHost);
-    final hasProxy = proxyCookies.isNotEmpty;
+    if (netState != CampusNetworkState.onCampus) {
+      await refreshNetwork();
+    }
+    final hasProxy =
+        (await authRepository.loadCookiesForHost(CampusEndpoints.jwProxyHost))
+            .isNotEmpty;
     if (netState == CampusNetworkState.onCampus) {
       return [
         const JwBaseUrl(CampusEndpoints.jwBaseUrl, isProxy: false),
@@ -191,9 +360,6 @@ class CampusAppState extends ChangeNotifier {
         JwBaseUrl(CampusEndpoints.jwProxyBaseUrl, isProxy: true),
         JwBaseUrl(CampusEndpoints.jwBaseUrl, isProxy: false),
       ];
-    }
-    if (netState == CampusNetworkState.offCampus) {
-      throw const ProxySessionRequiredException();
     }
     return const [JwBaseUrl(CampusEndpoints.jwBaseUrl, isProxy: false)];
   }
@@ -227,9 +393,7 @@ class CampusAppState extends ChangeNotifier {
           _kExamsCache,
           jsonEncode(exams.map((e) => e.toJson()).toList()),
         );
-      } catch (_) {
-        // 考试未开放时不阻断课表与成绩保存
-      }
+      } catch (_) {}
 
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
       await _prefs?.setInt(_kLastSyncTime, lastSyncAt!);
@@ -258,12 +422,13 @@ class CampusAppState extends ChangeNotifier {
     }
   }
 
+  // ---- 校园卡 ----
+
   Future<void> refreshCard({bool silent = false}) async {
     if (loadingCard) return;
     loadingCard = true;
     if (!silent) cardError = null;
     notifyListeners();
-
     try {
       final overview = await cardClient.fetchOverview();
       final page1 = await cardClient.fetchBills(page: 1, pageSize: 30);
@@ -273,13 +438,9 @@ class CampusAppState extends ChangeNotifier {
       _cardBillsPage = 1;
       cardError = null;
     } on SessionExpiredException catch (e) {
-      if (!silent) {
-        cardError = e.message;
-      }
+      if (!silent) cardError = e.message;
     } catch (e) {
-      if (!silent) {
-        cardError = '校园卡同步失败：$e';
-      }
+      if (!silent) cardError = '校园卡同步失败：$e';
     } finally {
       loadingCard = false;
       notifyListeners();
@@ -304,6 +465,324 @@ class CampusAppState extends ChangeNotifier {
     }
   }
 
+  // ---- 宿舍电费 ----
+
+  Future<void> refreshElectricity({bool silent = false}) async {
+    if (loadingElectricity) return;
+    loadingElectricity = true;
+    if (!silent) electricityError = null;
+    notifyListeners();
+    try {
+      final snap = await electricityClient.fetchSnapshot();
+      electricity = snap;
+      await _prefs?.setString(_kElectricityCache, jsonEncode(snap.toJson()));
+      electricityError = null;
+    } on ConfigurationRequiredException catch (e) {
+      if (!silent) electricityError = e.message;
+    } on SessionExpiredException catch (e) {
+      if (!silent) electricityError = e.message;
+    } catch (e) {
+      if (!silent) electricityError = '电费同步失败：$e';
+    } finally {
+      loadingElectricity = false;
+      notifyListeners();
+    }
+  }
+
+  // ---- U净洗衣 ----
+
+  Future<void> saveUjingToken(String token) async {
+    await authRepository.saveOpaqueToken(
+      systemId: CampusEndpoints.systemUjing,
+      domain: 'phoenix.ujing.online',
+      token: token,
+    );
+    await refreshSessionFlags();
+  }
+
+  Future<void> loginUjing(String mobile, String captcha) async {
+    final token = await ujingClient.login(mobile, captcha);
+    await saveUjingToken(token);
+  }
+
+  Future<void> setUjingCampusPref(String pref) async {
+    ujingCampusPref = pref;
+    notifyListeners();
+    await refreshUjing();
+  }
+
+  Future<void> refreshUjing() async {
+    final cred =
+        await authRepository.getCredential(CampusEndpoints.systemUjing);
+    if (cred == null || cred.cookie.trim().isEmpty) {
+      hasUjingSession = false;
+      notifyListeners();
+      return;
+    }
+    final token = cred.cookie.trim();
+    loadingUjing = true;
+    ujingError = null;
+    notifyListeners();
+    try {
+      double lat = kUjingCampuses.first.latitude;
+      double lng = kUjingCampuses.first.longitude;
+      if (ujingCampusPref == 'auto') {
+        final pos = await DeviceLocationBridge.getCurrentLocation();
+        if (pos != null) {
+          final gcj =
+              CoordinateConverter.wgs84ToGcj02(pos.latitude, pos.longitude);
+          lat = gcj.$1;
+          lng = gcj.$2;
+          ujingLocationLabel = '当前位置（已纠偏）';
+        } else {
+          ujingLocationLabel = '${kUjingCampuses.first.name}（定位未授权回退）';
+        }
+      } else {
+        final found = kUjingCampuses
+                .where((c) => c.id == ujingCampusPref)
+                .firstOrNull ??
+            kUjingCampuses.first;
+        lat = found.latitude;
+        lng = found.longitude;
+        ujingLocationLabel = found.name;
+      }
+
+      ujingStores = await ujingClient.nearbyStores(lat, lng, token);
+      ujingRunning = await ujingClient.runningOrders(token);
+      ujingHistory = await ujingClient.historyOrders(token, limit: 10);
+      if (ujingHistory.isNotEmpty) {
+        try {
+          ujingRecentStore = await ujingClient.orderDetailStore(
+            ujingHistory.first.orderId,
+            token,
+          );
+        } catch (_) {}
+      }
+      ujingError = null;
+    } on SessionExpiredException catch (e) {
+      ujingError = e.message;
+      await authRepository.clearSystem(CampusEndpoints.systemUjing, const []);
+      hasUjingSession = false;
+    } catch (e) {
+      ujingError = 'U净刷新失败：$e';
+    } finally {
+      loadingUjing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> logoutUjing() async {
+    await authRepository.clearSystem(CampusEndpoints.systemUjing, const []);
+    ujingStores = const [];
+    ujingRunning = const [];
+    ujingHistory = const [];
+    ujingRecentStore = null;
+    hasUjingSession = false;
+    notifyListeners();
+  }
+
+  // ---- 慧生活798 ----
+
+  Future<void> loginHuiLife({
+    required String phone,
+    required String smsCode,
+    required HuiLifePlatform platform,
+  }) async {
+    final session = await huiLifeClient.login(
+      phone: phone,
+      smsCode: smsCode,
+      platform: platform,
+    );
+    final sysId = platform == HuiLifePlatform.app
+        ? CampusEndpoints.systemHuiLifeApp
+        : CampusEndpoints.systemHuiLifeAccount;
+    await authRepository.saveOpaqueToken(
+      systemId: sysId,
+      domain: 'i.ilife798.com',
+      token: session.token,
+    );
+    if (session.uid.isNotEmpty) {
+      huiLifeUid = session.uid;
+      await _prefs?.setString(_kHuiLifeUid, huiLifeUid);
+    }
+    await refreshSessionFlags();
+    await refreshHuiLife();
+  }
+
+  Future<String?> getHuiLifeToken(HuiLifePlatform platform) async {
+    final sysId = platform == HuiLifePlatform.app
+        ? CampusEndpoints.systemHuiLifeApp
+        : CampusEndpoints.systemHuiLifeAccount;
+    final cred = await authRepository.getCredential(sysId);
+    return cred?.cookie.trim().isEmpty == true ? null : cred?.cookie.trim();
+  }
+
+  Future<void> addHuiLifeScannedDevice(HuiLifeDevice device) async {
+    huiLifeScannedIds.add(device.id);
+    await _prefs?.setStringList(
+      _kHuiLifeScanned,
+      huiLifeScannedIds.toList(),
+    );
+    if (!huiLifeDevices.any((d) => d.id == device.id)) {
+      huiLifeDevices = [device, ...huiLifeDevices];
+    }
+    notifyListeners();
+    await refreshHuiLifeDeviceStatuses();
+  }
+
+  Future<void> refreshHuiLife({bool silent = false}) async {
+    final appToken = await getHuiLifeToken(HuiLifePlatform.app);
+    final accountToken = await getHuiLifeToken(HuiLifePlatform.account);
+    final activeToken = appToken ?? accountToken;
+    final activePlatform =
+        appToken != null ? HuiLifePlatform.app : HuiLifePlatform.account;
+    if (activeToken == null) return;
+
+    loadingHuiLife = true;
+    if (!silent) huiLifeError = null;
+    notifyListeners();
+    try {
+      final mergedDevices = <String, HuiLifeDevice>{};
+      for (final d in huiLifeDevices) {
+        if (huiLifeScannedIds.contains(d.id)) mergedDevices[d.id] = d;
+      }
+
+      try {
+        huiLifeWallet =
+            await huiLifeClient.fetchWallet(activeToken, activePlatform);
+      } catch (_) {}
+
+      try {
+        final master =
+            await huiLifeClient.fetchMaster(activeToken, activePlatform);
+        for (final d in master) {
+          mergedDevices[d.id] = d;
+        }
+      } catch (_) {}
+
+      try {
+        huiLifeBills =
+            await huiLifeClient.fetchBills(activeToken, activePlatform);
+        for (final b in huiLifeBills) {
+          if (b.deviceId.isNotEmpty && !mergedDevices.containsKey(b.deviceId)) {
+            mergedDevices[b.deviceId] = HuiLifeDevice(
+              id: b.deviceId,
+              name: b.deviceName.isNotEmpty ? b.deviceName : '最近使用设备',
+              detail: '来自消费记录',
+            );
+          }
+        }
+      } catch (_) {}
+
+      huiLifeDevices = mergedDevices.values.toList();
+      huiLifeError = null;
+      await refreshHuiLifeDeviceStatuses();
+    } on HuiLifeTokenExpiredException catch (e) {
+      if (!silent) huiLifeError = e.message;
+    } catch (e) {
+      if (!silent) huiLifeError = '慧生活刷新失败：$e';
+    } finally {
+      loadingHuiLife = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshHuiLifeDeviceStatuses() async {
+    final appToken = await getHuiLifeToken(HuiLifePlatform.app);
+    final accountToken = await getHuiLifeToken(HuiLifePlatform.account);
+    final token = appToken ?? accountToken;
+    final platform =
+        appToken != null ? HuiLifePlatform.app : HuiLifePlatform.account;
+    if (token == null || huiLifeDevices.isEmpty) return;
+
+    for (final dev in huiLifeDevices) {
+      try {
+        final status = await huiLifeClient.fetchDeviceStatus(
+          token,
+          platform,
+          dev.id,
+          more: dev.name == '扫码设备' || dev.name == '未命名设备',
+        );
+        huiLifeStatuses[dev.id] = status;
+      } catch (_) {}
+    }
+    notifyListeners();
+  }
+
+  Future<void> startHuiLifeDevice(String deviceId) async {
+    final appToken = await getHuiLifeToken(HuiLifePlatform.app);
+    if (appToken == null) {
+      throw const HuiLifeTokenExpiredException('请先完成「设备控制端」短信登录');
+    }
+    await huiLifeClient.startDevice(appToken, deviceId);
+    huiLifeLocalStartedAt[deviceId] = DateTime.now().millisecondsSinceEpoch;
+    await refreshHuiLifeDeviceStatuses();
+  }
+
+  Future<void> stopHuiLifeDevice(String deviceId) async {
+    final appToken = await getHuiLifeToken(HuiLifePlatform.app);
+    if (appToken == null) {
+      throw const HuiLifeTokenExpiredException('请先完成「设备控制端」短信登录');
+    }
+    await huiLifeClient.stopDevice(appToken, deviceId);
+    huiLifeLocalStartedAt.remove(deviceId);
+    await refreshHuiLifeDeviceStatuses();
+  }
+
+  // ---- 超星学习通 ----
+
+  Future<void> refreshChaoxing({bool silent = false}) async {
+    if (loadingChaoxing) return;
+    if (!await chaoxingClient.hasSession()) {
+      hasChaoxingSession = false;
+      notifyListeners();
+      return;
+    }
+    loadingChaoxing = true;
+    if (!silent) chaoxingError = null;
+    notifyListeners();
+    try {
+      chaoxing = await chaoxingClient.fetchSnapshot();
+      chaoxingError = null;
+    } on ChaoxingSessionExpiredException catch (e) {
+      if (!silent) chaoxingError = e.message;
+    } catch (e) {
+      if (!silent) chaoxingError = '学习通同步失败：$e';
+    } finally {
+      loadingChaoxing = false;
+      notifyListeners();
+    }
+  }
+
+  // ---- 高级配置 & 自动登录 ----
+
+  Future<void> updateRuntimeConfig(RuntimeConfig config) async {
+    await runtimeConfigStore.update(config);
+    notifyListeners();
+  }
+
+  Future<void> clearRuntimeConfig() async {
+    await runtimeConfigStore.clear();
+    notifyListeners();
+  }
+
+  Future<void> enableAutoLogin(String username, String password) async {
+    await casAutoLogin.login(username, password);
+    await credentialVault.save(username, password, enabled: true);
+    autoLoginEnabled = true;
+    autoLoginUsername = username.trim();
+    await refreshSessionFlags();
+  }
+
+  Future<void> disableAutoLogin() async {
+    await credentialVault.clear();
+    autoLoginEnabled = false;
+    autoLoginUsername = '';
+    notifyListeners();
+  }
+
+  // ---- 天气 & 图书馆 ----
+
   Future<void> setWeatherLocationPref(String pref) async {
     weatherLocationPref = pref;
     await _prefs?.setString(_kWeatherPref, pref);
@@ -322,7 +801,6 @@ class CampusAppState extends ChangeNotifier {
     loadingWeather = true;
     weatherError = null;
     notifyListeners();
-
     try {
       var target = WeatherClient.guanglan;
       if (weatherLocationPref == 'auto') {
@@ -375,10 +853,12 @@ class CampusAppState extends ChangeNotifier {
 
   Future<void> logoutAndClearAll() async {
     await authRepository.clearAll();
+    await credentialVault.clear();
     await WkCookieBridge.clearAllCookies();
     await _prefs?.remove(_kCoursesCache);
     await _prefs?.remove(_kGradesCache);
     await _prefs?.remove(_kExamsCache);
+    await _prefs?.remove(_kElectricityCache);
     await _prefs?.remove(_kLastSyncTime);
     courses = const [];
     grades = const [];
@@ -386,13 +866,27 @@ class CampusAppState extends ChangeNotifier {
     cardOverview = null;
     cardBills = const [];
     cardBillsTotal = 0;
-    cardError = null;
-    jwError = null;
-    lastSyncAt = null;
+    electricity = null;
+    ujingStores = const [];
+    ujingRunning = const [];
+    ujingHistory = const [];
+    ujingRecentStore = null;
+    huiLifeWallet = null;
+    huiLifeDevices = const [];
+    huiLifeBills = const [];
+    huiLifeStatuses.clear();
+    huiLifeLocalStartedAt.clear();
+    chaoxing = null;
+    autoLoginEnabled = false;
+    autoLoginUsername = '';
     hasCasMaster = false;
     hasJwSession = false;
     hasProxySession = false;
     hasVpnSession = false;
+    hasUjingSession = false;
+    hasChaoxingSession = false;
+    hasHuiLifeAccount = false;
+    hasHuiLifeApp = false;
     sessionExpired = false;
     sessionExpiredMessage = null;
     notifyListeners();

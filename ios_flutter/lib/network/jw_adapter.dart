@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,9 +25,13 @@ class JwAdapter {
     required CampusHttpClient httpClient,
     required Future<List<JwBaseUrl>> Function() baseUrlsProvider,
     CasSsoManager? ssoManager,
+    void Function()? onDirectReachable,
+    Future<bool> Function()? sessionRecovery,
   })  : _httpClient = httpClient,
         _baseUrlsProvider = baseUrlsProvider,
-        _ssoManager = ssoManager;
+        _ssoManager = ssoManager,
+        _onDirectReachable = onDirectReachable,
+        _sessionRecovery = sessionRecovery;
 
   static const int _bootstrapRetryCooldownMs = 30000;
   static const String _schedulePage =
@@ -56,6 +61,8 @@ class JwAdapter {
   final CampusHttpClient _httpClient;
   final Future<List<JwBaseUrl>> Function() _baseUrlsProvider;
   final CasSsoManager? _ssoManager;
+  final void Function()? _onDirectReachable;
+  final Future<bool> Function()? _sessionRecovery;
 
   int _lastFailedBootstrapAt = 0;
   String? _preferredBaseUrl;
@@ -87,7 +94,13 @@ class JwAdapter {
         masterUpdatedAt <= _lastFailedBootstrapAt) {
       return false;
     }
-    final ok = await manager.ensureServiceSession(CampusEndpoints.jwSsoUrl);
+    var ok = await manager.ensureServiceSession(CampusEndpoints.jwSsoUrl);
+    if (!ok && _sessionRecovery != null) {
+      final recovered = await _sessionRecovery();
+      if (recovered) {
+        ok = await manager.ensureServiceSession(CampusEndpoints.jwSsoUrl);
+      }
+    }
     _lastFailedBootstrapAt = ok ? 0 : now;
     return ok;
   }
@@ -95,8 +108,9 @@ class JwAdapter {
   bool get _lastBaseWasProxy =>
       _preferredBaseUrl == CampusEndpoints.jwProxyBaseUrl;
 
-  Exception _terminalError(bool proxyAttempted, Object? lastError) {
+  Exception _terminalError(bool proxyAttempted, bool directUnreachable, Object? lastError) {
     if (proxyAttempted) return const ProxySessionRequiredException();
+    if (directUnreachable) return const ProxySessionRequiredException();
     if (lastError is Exception) return lastError;
     return const SessionExpiredException();
   }
@@ -365,10 +379,12 @@ class JwAdapter {
 
   Future<String> _get(String path) async {
     var proxyAttempted = false;
+    var directUnreachable = false;
     Object? lastError;
     for (final base in await _baseCandidates()) {
       try {
         final first = await _getRaw(base.url + path, base.url);
+        if (!base.isProxy) _onDirectReachable?.call();
         if (!first.sessionExpired) {
           _preferredBaseUrl = base.url;
           return first.body;
@@ -386,10 +402,16 @@ class JwAdapter {
         }
       } catch (e) {
         lastError = e;
-        if (base.isProxy) proxyAttempted = true;
+        if (base.isProxy) {
+          proxyAttempted = true;
+        } else if (e is SocketException ||
+            e is HandshakeException ||
+            e is TimeoutException) {
+          directUnreachable = true;
+        }
       }
     }
-    throw _terminalError(proxyAttempted, lastError);
+    throw _terminalError(proxyAttempted, directUnreachable, lastError);
   }
 
   Future<_RawResponse> _getRaw(String url, String base) async {
@@ -435,10 +457,12 @@ class JwAdapter {
     String refererPath,
   ) async {
     var proxyAttempted = false;
+    var directUnreachable = false;
     Object? lastError;
     for (final base in await _baseCandidates()) {
       try {
         final first = await _postRaw(base.url, path, fields, refererPath);
+        if (!base.isProxy) _onDirectReachable?.call();
         if (!first.sessionExpired) {
           _preferredBaseUrl = base.url;
           return first.body;
@@ -456,10 +480,16 @@ class JwAdapter {
         }
       } catch (e) {
         lastError = e;
-        if (base.isProxy) proxyAttempted = true;
+        if (base.isProxy) {
+          proxyAttempted = true;
+        } else if (e is SocketException ||
+            e is HandshakeException ||
+            e is TimeoutException) {
+          directUnreachable = true;
+        }
       }
     }
-    throw _terminalError(proxyAttempted, lastError);
+    throw _terminalError(proxyAttempted, directUnreachable, lastError);
   }
 
   Future<_RawResponse> _postRaw(

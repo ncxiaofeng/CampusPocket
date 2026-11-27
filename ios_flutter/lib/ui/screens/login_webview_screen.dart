@@ -159,7 +159,7 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
       } catch (_) {}
     }
 
-    if (widget.target.autoCompleteHosts.contains(currentHost) &&
+    if (widget.target.shouldAutoCompleteUrl(url) &&
         !_saved &&
         !_autoCompleting) {
       _autoCompleting = true;
@@ -175,6 +175,9 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
     if (widget.target.systemId == CampusEndpoints.systemCasMaster &&
         currentHost.isNotEmpty &&
         currentHost != CampusEndpoints.casHost &&
+        !url.toLowerCase().contains('verify') &&
+        !url.toLowerCase().contains('mfa') &&
+        !url.toLowerCase().contains('sms') &&
         !_saved &&
         !_autoCompleting) {
       final all = await WkCookieBridge.getAllCookies();

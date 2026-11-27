@@ -5,19 +5,25 @@ import '../../core/campus_endpoints.dart';
 import '../../network/campus_network_status.dart';
 import '../theme/glass_theme.dart';
 import 'about_screen.dart';
+import 'auto_login_screen.dart';
 import 'campus_card_screen.dart';
 import 'campus_web_page_screen.dart';
+import 'chaoxing_screen.dart';
 import 'classrooms_screen.dart';
+import 'electricity_screen.dart';
 import 'exams_screen.dart';
 import 'grades_screen.dart';
+import 'huilife_screen.dart';
 import 'library_screen.dart';
 import 'login_webview_screen.dart';
 import 'more_screen.dart';
 import 'notices_screen.dart';
+import 'runtime_config_screen.dart';
 import 'schedule_screen.dart';
 import 'today_screen.dart';
+import 'ujing_screen.dart';
 
-/// 主框架：4 Tab 悬浮液态玻璃底栏 + 中央加号快捷面板。
+/// 主框架：4 Tab 悬浮液态玻璃底栏 + 中央加号快捷面板 + 前台恢复自动重探校园网。
 class ShellScreen extends StatefulWidget {
   final CampusAppState appState;
 
@@ -27,7 +33,7 @@ class ShellScreen extends StatefulWidget {
   State<ShellScreen> createState() => _ShellScreenState();
 }
 
-class _ShellScreenState extends State<ShellScreen> {
+class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   int _tabIndex = 0;
 
   static const _tabs = [
@@ -36,6 +42,26 @@ class _ShellScreenState extends State<ShellScreen> {
     NavTabItem('校园卡', Icons.credit_card_outlined, Icons.credit_card_rounded),
     NavTabItem('更多', Icons.menu_rounded, Icons.menu_open_rounded),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // 用户在系统弹窗点击允许“本地网络”或切 Wi-Fi 回到前台时自动重探校园网。
+      widget.appState.refreshNetwork();
+    }
+  }
 
   void _push(Widget page) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
@@ -127,34 +153,34 @@ class _ShellScreenState extends State<ShellScreen> {
         final actions = [
           ('立即同步', Icons.sync_rounded, GlassColors.primary, _syncJw),
           (
-            '成绩查询',
-            Icons.bar_chart_rounded,
-            const Color(0xFF6366F1),
-            () => _push(GradesScreen(appState: widget.appState, onSync: _syncJw)),
+            '宿舍电费',
+            Icons.bolt_rounded,
+            const Color(0xFFF59E0B),
+            () => _push(ElectricityScreen(appState: widget.appState)),
           ),
           (
-            '考试安排',
-            Icons.event_note_rounded,
+            'U净洗衣',
+            Icons.local_laundry_service_rounded,
             const Color(0xFFEC4899),
-            () => _push(ExamsScreen(appState: widget.appState, onSync: _syncJw)),
+            () => _push(UjingScreen(appState: widget.appState)),
+          ),
+          (
+            '慧生活798',
+            Icons.water_drop_outlined,
+            const Color(0xFF0EA5E9),
+            () => _push(HuiLifeScreen(appState: widget.appState)),
+          ),
+          (
+            '学习通',
+            Icons.assignment_outlined,
+            const Color(0xFF6366F1),
+            () => _push(ChaoxingScreen(appState: widget.appState)),
           ),
           (
             '空闲教室',
             Icons.meeting_room_outlined,
             const Color(0xFF3B82F6),
             () => _push(ClassroomsScreen(appState: widget.appState)),
-          ),
-          (
-            '图书馆空位',
-            Icons.menu_book_rounded,
-            const Color(0xFF8B5CF6),
-            () => _push(LibraryScreen(appState: widget.appState)),
-          ),
-          (
-            '零信任门户',
-            Icons.vpn_lock_rounded,
-            const Color(0xFF0D9488),
-            _openPortal,
           ),
         ];
 
@@ -265,6 +291,13 @@ class _ShellScreenState extends State<ShellScreen> {
                 _push(NoticesScreen(appState: widget.appState)),
             onOpenLibrary: () =>
                 _push(LibraryScreen(appState: widget.appState)),
+            onOpenElectricity: () =>
+                _push(ElectricityScreen(appState: widget.appState)),
+            onOpenUjing: () => _push(UjingScreen(appState: widget.appState)),
+            onOpenHuiLife: () =>
+                _push(HuiLifeScreen(appState: widget.appState)),
+            onOpenChaoxing: () =>
+                _push(ChaoxingScreen(appState: widget.appState)),
             onSync: _syncJw,
           ),
           ScheduleScreen(appState: widget.appState, onSync: _syncJw),
@@ -289,6 +322,17 @@ class _ShellScreenState extends State<ShellScreen> {
                 _push(NoticesScreen(appState: widget.appState)),
             onOpenLibrary: () =>
                 _push(LibraryScreen(appState: widget.appState)),
+            onOpenElectricity: () =>
+                _push(ElectricityScreen(appState: widget.appState)),
+            onOpenUjing: () => _push(UjingScreen(appState: widget.appState)),
+            onOpenHuiLife: () =>
+                _push(HuiLifeScreen(appState: widget.appState)),
+            onOpenChaoxing: () =>
+                _push(ChaoxingScreen(appState: widget.appState)),
+            onOpenAutoLogin: () =>
+                _push(AutoLoginScreen(appState: widget.appState)),
+            onOpenRuntimeConfig: () =>
+                _push(RuntimeConfigScreen(appState: widget.appState)),
             onOpenAbout: () => _push(AboutScreen(appState: widget.appState)),
             onSync: _syncJw,
           ),

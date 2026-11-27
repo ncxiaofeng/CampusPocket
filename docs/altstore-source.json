@@ -10,24 +10,33 @@
       "name": "冻小梨",
       "bundleIdentifier": "com.ecut.campuspocket",
       "developerName": "ncxiaofeng",
-      "subtitle": "课表 · 成绩 · 考试 · 空教室 · 校园卡 · 图书馆",
-      "localizedDescription": "东华理工大学校园服务聚合 App（iOS 未越狱免费自签版）。纯本地无后端，凭据仅保存于本机 Keychain，支持校园网直连与校外 WebVPN 代理同步。",
+      "subtitle": "课表 · 成绩 · 电费 · U净 · 798 · 学习通 · 校园卡",
+      "localizedDescription": "东华理工大学校园服务聚合 App（iOS 未越狱免费自签版）。纯本地无后端，凭据仅保存于本机 Keychain，支持校园网直连、校外 WebVPN 代理、电费、U净免配置、慧生活798、学习通与离线扫码。",
       "iconURL": "https://raw.githubusercontent.com/ncxiaofeng/CampusPocket/main/ios_flutter/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
       "tintColor": "#10B981",
       "category": "utilities",
       "versions": [
         {
+          "version": "0.6.5",
+          "date": "2026-11-28",
+          "localizedDescription": "修复校内已登录误报零信任门户与新设备验证码页秒退；补全宿舍电费、U净免配置登录与坐标纠偏、慧生活798 扫码启停、超星学习通、可选自动登录与一次性安全配置码。",
+          "downloadURL": "https://github.com/ncxiaofeng/CampusPocket/releases/download/ios-v0.6.5/CampusPocket-iOS-0.6.5-unsigned.ipa",
+          "size": 0,
+          "minOSVersion": "15.0"
+        },
+        {
           "version": "0.6.4",
           "date": "2026-11-27",
           "localizedDescription": "冻小梨 iOS 自签首版：统一身份认证单点登录、校外 WebVPN 代理、首页天气、课表、成绩、考试、空闲教室、通知公告、校园卡与图书馆空位。",
           "downloadURL": "https://github.com/ncxiaofeng/CampusPocket/releases/download/ios-v0.6.4/CampusPocket-iOS-0.6.4-unsigned.ipa",
-          "size": 0,
+          "size": 8480906,
           "minOSVersion": "15.0"
         }
       ],
       "appPermissions": {
         "entitlements": [],
         "privacy": {
+          "NSCameraUsageDescription": "仅用于本地离线扫描慧生活798 设备二维码与高级配置二维码。",
           "NSLocalNetworkUsageDescription": "用于在校园网环境下直连学校内网教务系统（172.20.130.13）。",
           "NSLocationWhenInUseUsageDescription": "仅用于获取当前位置坐标以查询校园逐小时天气预报。"
         }

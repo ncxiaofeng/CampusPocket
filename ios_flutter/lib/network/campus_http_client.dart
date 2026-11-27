@@ -66,6 +66,40 @@ class CampusHttpClient {
     );
   }
 
+  Future<CampusHttpResponse> delete(
+    String url, {
+    Map<String, String> headers = const {},
+    bool useCookies = false,
+  }) {
+    return _send(
+      method: 'DELETE',
+      uri: Uri.parse(url),
+      headers: headers,
+      followRedirects: false,
+      useCookies: useCookies,
+    );
+  }
+
+  Future<List<int>> getBytes(
+    String url, {
+    Map<String, String> headers = const {},
+  }) async {
+    final client = HttpClient()..connectionTimeout = _timeout;
+    try {
+      final request = await client.getUrl(Uri.parse(url)).timeout(_timeout);
+      headers.forEach((k, v) => request.headers.set(k, v));
+      final response = await request.close().timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('请求返回 HTTP ${response.statusCode}');
+      }
+      return await response
+          .fold<List<int>>(<int>[], (prev, chunk) => prev..addAll(chunk))
+          .timeout(_timeout);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<CampusHttpResponse> postForm(
     String url,
     Map<String, String> fields, {
