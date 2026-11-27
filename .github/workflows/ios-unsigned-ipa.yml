@@ -27,16 +27,18 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
 
       - name: Fetch dependencies
         run: flutter pub get
 
-      - name: Static analysis and unit tests
-        run: |
-          flutter analyze
-          flutter test
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test -r expanded
 
       - name: Resolve version
         id: vars
