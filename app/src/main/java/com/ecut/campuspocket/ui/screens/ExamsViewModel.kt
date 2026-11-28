@@ -12,6 +12,10 @@ import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.data.local.ExamEntity
 import com.ecut.campuspocket.data.repository.ExamRepository
 import com.ecut.campuspocket.data.repository.JwSyncManager
+import com.ecut.campuspocket.data.repository.ScheduleRepository
+import com.ecut.campuspocket.data.schedule.ParsedItemKind
+import com.ecut.campuspocket.data.schedule.ParsedScheduleDraft
+import com.ecut.campuspocket.data.schedule.ScheduleExamFusion
 import com.ecut.campuspocket.network.SessionExpiredException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +24,7 @@ import kotlinx.coroutines.launch
 
 class ExamsViewModel(
     private val repository: ExamRepository,
+    private val scheduleRepository: ScheduleRepository,
     private val syncManager: JwSyncManager
 ) : ViewModel() {
 
@@ -71,6 +76,98 @@ class ExamsViewModel(
         }
     }
 
+    fun saveCustomExam(
+        existingKey: String? = null,
+        courseName: String,
+        examDate: String,
+        startClock: String,
+        endClock: String,
+        location: String,
+        campus: String,
+        examType: String,
+        seatNo: String,
+        note: String
+    ) {
+        viewModelScope.launch {
+            val entity = ScheduleExamFusion.buildCustomExamEntity(
+                existingKey = existingKey,
+                courseName = courseName,
+                examDate = examDate,
+                startClock = startClock,
+                endClock = endClock,
+                location = location,
+                campus = campus,
+                examType = examType,
+                seatNo = seatNo,
+                note = note
+            )
+            repository.upsertCustomExam(entity)
+            message = if (existingKey.isNullOrBlank()) {
+                "已添加自定义考试「${entity.courseName}」"
+            } else {
+                "已更新自定义考试「${entity.courseName}」"
+            }
+        }
+    }
+
+    fun deleteCustomExam(key: String) {
+        viewModelScope.launch {
+            repository.deleteExam(key)
+            message = "已删除该自定义考试"
+        }
+    }
+
+    fun saveReviewedDrafts(drafts: List<ParsedScheduleDraft>) {
+        val active = drafts.filter { it.selected && it.title.isNotBlank() }
+        if (active.isEmpty()) return
+        viewModelScope.launch {
+            var courseCount = 0
+            var examCount = 0
+            active.forEach { d ->
+                if (d.kind == ParsedItemKind.EXAM) {
+                    repository.upsertCustomExam(
+                        ScheduleExamFusion.buildCustomExamEntity(
+                            courseName = d.title,
+                            examDate = d.examDate,
+                            startClock = d.startClock,
+                            endClock = d.endClock,
+                            location = d.room,
+                            campus = d.campus,
+                            examType = d.examType,
+                            seatNo = d.seatNo,
+                            note = d.note
+                        )
+                    )
+                    examCount++
+                } else {
+                    scheduleRepository.upsertCustomCourse(
+                        ScheduleExamFusion.buildCustomCourseEntity(
+                            title = d.title,
+                            dayOfWeek = d.dayOfWeek,
+                            startPeriod = d.startPeriod,
+                            endPeriod = d.endPeriod,
+                            weeksSpec = d.weeksSpec,
+                            room = d.room,
+                            campus = d.campus,
+                            teacher = d.teacher
+                        )
+                    )
+                    courseCount++
+                }
+            }
+            val parts = buildList {
+                if (examCount > 0) add("$examCount 场考试")
+                if (courseCount > 0) add("$courseCount 节课程")
+            }
+            message = "审核确认完成，已加入 ${parts.joinToString("、")}"
+        }
+    }
+
+    fun showNotice(text: String) {
+        needsLogin = false
+        message = text
+    }
+
     fun clearMessage() {
         message = null
         needsLogin = false
@@ -81,6 +178,7 @@ class ExamsViewModel(
             initializer {
                 ExamsViewModel(
                     repository = AppContainer.examRepository,
+                    scheduleRepository = AppContainer.scheduleRepository,
                     syncManager = AppContainer.jwSyncManager
                 )
             }

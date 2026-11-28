@@ -70,7 +70,9 @@ data class CourseEntity(
     val weeksSpec: String = "",
     /** 展开后的周次，逗号分隔，例如 4,5,6,7,8,9。 */
     val weeksCsv: String = "",
-    val courseCode: String = ""
+    val courseCode: String = "",
+    /** true 表示用户手动或通过智能识别添加的自定义课程，教务同步时不覆盖。 */
+    val isCustom: Boolean = false
 )
 
 /**
@@ -94,7 +96,9 @@ data class ExamEntity(
     val ticketNo: String,
     val note: String,
     val term: String,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /** true 表示用户手动或通过智能识别添加的自定义考试，教务同步时不覆盖。 */
+    val isCustom: Boolean = false
 )
 
 /**

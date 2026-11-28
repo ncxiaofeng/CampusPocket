@@ -1,13 +1,16 @@
 import AVFoundation
 import CoreLocation
 import Flutter
+import PhotosUI
 import UIKit
+import Vision
 import WebKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var locationBridge: CampusLocationBridge?
   private var activeScanner: CampusQrScannerController?
+  private var ocrBridge: CampusOfflineOcrBridge?
 
   override func application(
     _ application: UIApplication,
@@ -129,6 +132,27 @@ import WebKit
       let title = (call.arguments as? [String: Any])?["title"] as? String ?? "扫描二维码"
       DispatchQueue.main.async {
         self?.presentQrScanner(title: title, result: result)
+      }
+    }
+
+    // 4. 原生 PHPicker + Vision 离线中文 OCR：零第三方依赖、零体积增长、不上传图片。
+    let ocr = CampusOfflineOcrBridge()
+    self.ocrBridge = ocr
+    let ocrChannel = FlutterMethodChannel(
+      name: "com.ecut.campuspocket/ocr",
+      binaryMessenger: messenger
+    )
+    ocrChannel.setMethodCallHandler { call, result in
+      guard call.method == "pickImageAndRecognizeText" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      DispatchQueue.main.async {
+        guard let presenter = Self.topViewController() else {
+          result(nil)
+          return
+        }
+        ocr.pickAndRecognize(from: presenter, result: result)
       }
     }
   }
@@ -362,6 +386,111 @@ private final class CampusQrScannerController: UIViewController, AVCaptureMetada
     session?.stopRunning()
     dismiss(animated: true) { [onFinish] in
       onFinish(value)
+    }
+  }
+}
+
+private final class CampusOfflineOcrBridge: NSObject, PHPickerViewControllerDelegate {
+  private var pendingResult: FlutterResult?
+
+  func pickAndRecognize(from presenter: UIViewController, result: @escaping FlutterResult) {
+    finish(with: nil)
+    pendingResult = result
+    var config = PHPickerConfiguration()
+    config.selectionLimit = 1
+    config.filter = .images
+    let picker = PHPickerViewController(configuration: config)
+    picker.delegate = self
+    presenter.present(picker, animated: true)
+  }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true)
+    guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
+      finish(with: nil)
+      return
+    }
+    provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+      guard let image = object as? UIImage, let cgImage = image.cgImage else {
+        DispatchQueue.main.async {
+          self?.finish(with: "")
+        }
+        return
+      }
+      self?.recognizeText(in: cgImage)
+    }
+  }
+
+  private func recognizeText(in cgImage: CGImage) {
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let request = VNRecognizeTextRequest { [weak self] req, err in
+        if err != nil {
+          DispatchQueue.main.async { self?.finish(with: "") }
+          return
+        }
+        let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
+        struct LineItem {
+          let topY: CGFloat
+          let leftX: CGFloat
+          let height: CGFloat
+          let text: String
+        }
+        let items: [LineItem] = observations.compactMap { obs in
+          guard let candidate = obs.topCandidates(1).first else { return nil }
+          let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+          guard !text.isEmpty else { return nil }
+          // Vision 原点在左下角，转换为自上而下阅读顺序
+          let topY = 1.0 - obs.boundingBox.midY
+          return LineItem(
+            topY: topY,
+            leftX: obs.boundingBox.minX,
+            height: max(obs.boundingBox.height, 0.015),
+            text: text
+          )
+        }.sorted { a, b in
+          if abs(a.topY - b.topY) <= max(a.height, b.height) * 0.55 {
+            return a.leftX < b.leftX
+          }
+          return a.topY < b.topY
+        }
+
+        var rows: [[LineItem]] = []
+        for item in items {
+          if let lastRow = rows.last,
+             let ref = lastRow.first,
+             abs(item.topY - ref.topY) <= max(item.height, ref.height) * 0.6 {
+            rows[rows.count - 1].append(item)
+          } else {
+            rows.append([item])
+          }
+        }
+        let merged = rows.map { row in
+          row.sorted { $0.leftX < $1.leftX }.map { $0.text }.joined(separator: " ")
+        }.joined(separator: "\n")
+
+        DispatchQueue.main.async {
+          self?.finish(with: merged)
+        }
+      }
+      request.recognitionLevel = .accurate
+      request.usesLanguageCorrection = true
+      request.recognitionLanguages = ["zh-Hans", "en-US"]
+
+      let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+      do {
+        try handler.perform([request])
+      } catch {
+        DispatchQueue.main.async {
+          self?.finish(with: "")
+        }
+      }
+    }
+  }
+
+  private func finish(with value: String?) {
+    if let callback = pendingResult {
+      pendingResult = nil
+      callback(value)
     }
   }
 }

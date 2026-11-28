@@ -17,7 +17,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         GradeEntity::class,
         ExamEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class CampusDatabase : RoomDatabase() {
@@ -74,6 +74,21 @@ abstract class CampusDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 → v5：课表与考试表增加 isCustom 字段，区分教务同步与用户自定义项，
+         * 确保教务同步不会覆盖删除用户的自定义课表与自定义考试。
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE course_blocks ADD COLUMN isCustom INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE exams ADD COLUMN isCustom INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun create(context: Context): CampusDatabase {
             System.loadLibrary("sqlcipher")
             val passphrase = DatabaseKeyManager(context).getOrCreatePassphrase()
@@ -84,7 +99,7 @@ abstract class CampusDatabase : RoomDatabase() {
                 DB_NAME
             )
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .fallbackToDestructiveMigration()
                 .build()
         }

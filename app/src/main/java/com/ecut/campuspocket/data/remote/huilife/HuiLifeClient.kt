@@ -89,6 +89,15 @@ class HuiLifeClient(
                 "/acc/login"
             }
             val json = postJson(path, body, platform, token = null)
+            if (platform == HuiLifePlatform.ACCOUNT &&
+                json.int("code") != 0 &&
+                json.string("msg").contains("升级")
+            ) {
+                throw IOException(
+                    "慧生活798 服务端已限制免配置查询通道（${json.string("msg")}）。" +
+                        "请先在「更多 → 高级配置」导入 798 配置码后切换「设备控制」登录，或使用官方支付宝小程序。"
+                )
+            }
             requireSuccess(json, "登录失败")
             val al = json.get("data")?.takeIf { it.isJsonObject }?.asJsonObject
                 ?.get("al")?.takeIf { it.isJsonObject }?.asJsonObject
@@ -429,7 +438,7 @@ class HuiLifeClient(
         )
         add(
             "VersionCode",
-            if (platform == HuiLifePlatform.APP) "3.1.9" else "2.0.83"
+            if (platform == HuiLifePlatform.APP) VERSION_APP else VERSION_ACCOUNT
         )
         add(
             "User-Agent",
@@ -500,6 +509,8 @@ class HuiLifeClient(
     }
 
     companion object {
+        private const val VERSION_ACCOUNT = "2.0.83"
+        private const val VERSION_APP = "3.1.9"
         private const val UA_ACCOUNT = "WaterWidget/5.5.0 (Android)"
         private const val UA_APP = "Android_ilife798_3.1.9"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

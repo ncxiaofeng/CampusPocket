@@ -10,5 +10,10 @@ class ExamRepository(private val examDao: ExamDao) {
 
     suspend fun replaceAll(exams: List<ExamEntity>) = examDao.replaceAll(exams)
 
+    suspend fun upsertCustomExam(exam: ExamEntity) =
+        examDao.upsert(exam.copy(isCustom = true))
+
+    suspend fun deleteExam(key: String) = examDao.deleteByKey(key)
+
     suspend fun clear() = examDao.clear()
 }

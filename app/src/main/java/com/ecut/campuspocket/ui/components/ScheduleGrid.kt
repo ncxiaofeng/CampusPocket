@@ -36,6 +36,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ecut.campuspocket.data.ClassTimes
+import com.ecut.campuspocket.data.schedule.ScheduleAdjustmentType
+import com.ecut.campuspocket.data.schedule.ScheduleDayAdjustment
+import com.ecut.campuspocket.ui.theme.CourseAmber
+import com.ecut.campuspocket.ui.theme.TealPrimary
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
@@ -52,7 +56,18 @@ data class CourseBlock(
     /** 空集合表示每周都显示（示例数据）。 */
     val weeks: Set<Int> = emptySet(),
     /** 原始周次文本，例如 4-9周。 */
-    val weeksSpec: String = ""
+    val weeksSpec: String = "",
+    val isCustom: Boolean = false,
+    val isExam: Boolean = false,
+    val courseId: Long? = null,
+    val examKey: String? = null,
+    val examDate: String = "",
+    val examClockRange: String = "",
+    val examType: String = "",
+    val seatNo: String = "",
+    val note: String = "",
+    val adjustedTag: String = "",
+    val adjustedDetail: String = ""
 )
 
 private val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -67,6 +82,7 @@ fun ScheduleGrid(
     weekStart: LocalDate = LocalDate.now().minusDays((LocalDate.now().dayOfWeek.value - 1).toLong()),
     highlightToday: Boolean = true,
     showCampus: Boolean = true,
+    dayAdjustments: Map<Int, ScheduleDayAdjustment> = emptyMap(),
     onBlockClick: (CourseBlock) -> Unit = {}
 ) {
     val labelWidth = 40.dp
@@ -99,6 +115,7 @@ fun ScheduleGrid(
             dayNames.forEachIndexed { index, name ->
                 val date = monday.plusDays(index.toLong())
                 val isToday = index == todayIndex
+                val adj = dayAdjustments[index]
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -106,16 +123,36 @@ fun ScheduleGrid(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                 ) {
-                    Text(
-                        text = name,
-                        fontSize = 11.sp,
-                        fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isToday) {
-                            primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = name,
+                            fontSize = 11.sp,
+                            fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isToday) {
+                                primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                        if (adj != null) {
+                            val badgeColor = if (adj.type == ScheduleAdjustmentType.SWAP) TealPrimary else CourseAmber
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 2.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(badgeColor.copy(alpha = 0.16f))
+                                    .padding(horizontal = 3.dp)
+                            ) {
+                                Text(
+                                    text = if (adj.type == ScheduleAdjustmentType.SWAP) "调" else "休",
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeColor
+                                )
+                            }
                         }
-                    )
+                    }
                     androidx.compose.foundation.layout.Spacer(Modifier.height(2.dp))
                     Box(
                         modifier = Modifier
@@ -151,6 +188,18 @@ fun ScheduleGrid(
                 val rowPx = rowHeight.toPx()
                 val labelPx = labelWidth.toPx()
                 val cellPx = cellWidth.toPx()
+
+                // 放假停课列加一层柔和暖色底色。
+                dayAdjustments.forEach { (col, adj) ->
+                    if (col in 0..6 && adj.type == ScheduleAdjustmentType.REST) {
+                        drawRoundRect(
+                            color = CourseAmber.copy(alpha = 0.06f),
+                            topLeft = Offset(labelPx + cellPx * col, 0f),
+                            size = Size(cellPx, size.height),
+                            cornerRadius = CornerRadius(10.dp.toPx(), 10.dp.toPx())
+                        )
+                    }
+                }
 
                 // 今天的列加一层很淡的底色，快速定位。
                 if (todayIndex in 0..6) {
@@ -246,8 +295,9 @@ fun ScheduleGrid(
                 }
             }
 
-            // 课程块：高饱和底色 + 白字，优先保证课程名可读。
-            blocks.forEach { block ->
+            // 课程与考试块：先画普通课程，再画考试块，确保考试卡片永不被普通课遮挡。
+            val orderedBlocks = blocks.sortedBy { if (it.isExam) 1 else 0 }
+            orderedBlocks.forEach { block ->
                 val startPeriod = block.startPeriod.coerceIn(1, periodCount)
                 val endPeriod = block.endPeriod.coerceIn(startPeriod, periodCount)
                 val span = endPeriod - startPeriod + 1
@@ -265,10 +315,12 @@ fun ScheduleGrid(
                     append(block.room)
                 }
                 val showPlace = place.isNotBlank() && (span >= 2 || rowHeight >= 54.dp)
-                val showTeacher = span >= 2 &&
+                val showTeacher = !block.isExam &&
+                    span >= 2 &&
                     block.teacher.isNotBlank() &&
                     rowHeight * span >= 88.dp
                 val titleLines = when {
+                    block.isExam && span >= 2 -> 3
                     span >= 3 -> 6
                     span == 2 -> 4
                     else -> 2
@@ -285,16 +337,52 @@ fun ScheduleGrid(
                         .background(
                             Brush.verticalGradient(
                                 listOf(
-                                    lerp(block.color, Color.White, 0.12f),
+                                    lerp(block.color, Color.White, if (block.isExam) 0.06f else 0.12f),
                                     block.color
                                 )
                             )
                         )
-                        .border(1.dp, Color.White.copy(alpha = 0.50f), blockShape)
+                        .border(
+                            width = if (block.isExam) 1.5.dp else 1.dp,
+                            color = if (block.isExam) Color.White.copy(alpha = 0.88f)
+                            else Color.White.copy(alpha = 0.50f),
+                            shape = blockShape
+                        )
                         .clickable { onBlockClick(block) }
                         .padding(horizontal = 2.dp, vertical = 3.dp)
                 ) {
                     Column {
+                        if (block.isExam) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color.White.copy(alpha = 0.92f))
+                                    .padding(horizontal = 3.dp, vertical = 0.5.dp)
+                            ) {
+                                Text(
+                                    text = if (block.isCustom) "考·自" else "考试",
+                                    fontSize = 8.sp,
+                                    lineHeight = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = block.color
+                                )
+                            }
+                        } else if (block.adjustedTag.isNotBlank() || block.isCustom) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color.White.copy(alpha = 0.28f))
+                                    .padding(horizontal = 3.dp, vertical = 0.5.dp)
+                            ) {
+                                Text(
+                                    text = block.adjustedTag.ifBlank { "自定义" },
+                                    fontSize = 7.5.sp,
+                                    lineHeight = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
+                            }
+                        }
                         Text(
                             text = block.title,
                             fontSize = 11.5.sp,
@@ -304,6 +392,17 @@ fun ScheduleGrid(
                             maxLines = titleLines,
                             overflow = TextOverflow.Ellipsis
                         )
+                        if (block.isExam && block.examClockRange.isNotBlank()) {
+                            Text(
+                                text = block.examClockRange,
+                                fontSize = 8.5.sp,
+                                lineHeight = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White.copy(alpha = 0.95f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         if (showPlace) {
                             Text(
                                 text = place,
@@ -325,6 +424,34 @@ fun ScheduleGrid(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                    }
+                }
+            }
+            // 放假停课列在无卡片时显示清爽的「放假停课」标签
+            dayAdjustments.forEach { (col, adj) ->
+                if (col in 0..6 && adj.type == ScheduleAdjustmentType.REST && blocks.none { it.dayOfWeek == col }) {
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = labelWidth + cellWidth * col + 3.dp,
+                                y = rowHeight * 2
+                            )
+                            .width(cellWidth - 6.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(CourseAmber.copy(alpha = 0.14f))
+                            .padding(horizontal = 3.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = adj.label.ifBlank { "放假停课" },
+                            fontSize = 9.5.sp,
+                            lineHeight = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CourseAmber,
+                            textAlign = TextAlign.Center,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }

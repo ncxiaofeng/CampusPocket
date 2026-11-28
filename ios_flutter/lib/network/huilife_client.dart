@@ -173,6 +173,8 @@ class HuiLifeClient {
   })  : _httpClient = httpClient,
         _appSignSaltProvider = appSignSaltProvider;
 
+  static const String _versionAccount = '2.0.83';
+  static const String _versionApp = '3.1.9';
   static const String _uaAccount = 'WaterWidget/5.5.0 (Android)';
   static const String _uaApp = 'Android_ilife798_3.1.9';
   static const String _randChars =
@@ -258,6 +260,14 @@ class HuiLifeClient {
       path = '/acc/login?sign=${signAppLogin(phone, smsCode, salt)}';
     }
     final json = await _postJson(path, body, platform, null);
+    if (platform == HuiLifePlatform.account &&
+        _int(json['code']) != 0 &&
+        '${json['msg'] ?? ''}'.contains('升级')) {
+      final msg = '${json['msg'] ?? '请升级最新版应用'}'.trim();
+      throw HttpException(
+        '慧生活798 服务端已限制免配置查询通道（$msg）。请先在「更多 → 高级配置」导入 798 配置码后切换「设备控制端」登录，或点右上角「支付宝」使用官方小程序。',
+      );
+    }
     _requireSuccess(json, '登录失败');
     final data = (json['data'] as Map<String, dynamic>?) ?? const {};
     final al = (data['al'] as Map<String, dynamic>?) ?? const {};
@@ -433,11 +443,16 @@ class HuiLifeClient {
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
-  Map<String, String> _headers(HuiLifePlatform platform, String? token) => {
+  Map<String, String> _headers(
+    HuiLifePlatform platform,
+    String? token,
+  ) =>
+      {
         'Content-Type': 'application/json',
         'Accept-Language': 'zh-Hans-CN;q=1',
         'ApplicationType': platform == HuiLifePlatform.app ? '1,1' : '1,5',
-        'VersionCode': platform == HuiLifePlatform.app ? '3.1.9' : '2.0.83',
+        'VersionCode':
+            platform == HuiLifePlatform.app ? _versionApp : _versionAccount,
         'User-Agent': platform == HuiLifePlatform.app ? _uaApp : _uaAccount,
         if (token != null && token.isNotEmpty) 'Authorization': token,
       };

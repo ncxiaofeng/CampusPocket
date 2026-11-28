@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
 import '../../core/class_times.dart';
+import '../../core/schedule_adjustments.dart';
 import '../../data/models.dart';
 import '../../network/campus_network_status.dart';
 import '../../network/electricity_client.dart';
@@ -57,12 +58,20 @@ class TodayScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
+    final todayIso = ScheduleAdjustments.formatIso(now);
     final week = appState.currentWeek;
-    final todayIndex = now.weekday - 1;
-    final todayCourses = appState.courses
-        .where((c) => c.dayOfWeek == todayIndex && c.weeks.contains(week))
-        .toList()
+    final adjustmentsByDate = appState.scheduleAdjustmentsByDate;
+    final todayAdjustment = adjustmentsByDate[todayIso];
+    final todayCourses = ScheduleAdjustments.resolveDayCourses(
+      appState.courses,
+      now,
+      adjustmentsByDate,
+    ).map((r) => r.course).toList()
       ..sort((a, b) => a.startPeriod.compareTo(b.startPeriod));
+    final todayExams = appState.exams
+        .where((e) => e.examDate == todayIso)
+        .toList()
+      ..sort((a, b) => a.startClock.compareTo(b.startClock));
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -117,7 +126,13 @@ class TodayScreen extends StatelessWidget {
             ),
             const SizedBox(height: 10),
           ],
-          _buildTodayCoursesCard(context, todayCourses, week),
+          _buildTodayCoursesCard(
+            context,
+            todayCourses,
+            todayExams,
+            week,
+            todayAdjustment,
+          ),
           const SizedBox(height: 14),
           _buildWeatherCard(context),
           if (appState.runtimeConfig.hasElectricity) ...[
@@ -210,8 +225,25 @@ class TodayScreen extends StatelessWidget {
   Widget _buildTodayCoursesCard(
     BuildContext context,
     List<JwCourse> todayCourses,
+    List<JwExam> todayExams,
     int week,
+    ScheduleDayAdjustment? todayAdjustment,
   ) {
+    final hasAnyToday = todayCourses.isNotEmpty || todayExams.isNotEmpty;
+    final adjNote = todayAdjustment == null
+        ? ''
+        : todayAdjustment.type == ScheduleAdjustmentType.rest
+            ? ' · ${todayAdjustment.label.isEmpty ? '放假停课' : todayAdjustment.label}'
+            : ' · 调休上 ${ScheduleAdjustments.shortDateWithWeekday(todayAdjustment.sourceDate)} 课';
+    final summaryText = !hasAnyToday
+        ? (todayAdjustment?.type == ScheduleAdjustmentType.rest
+            ? '今日放假停课$adjNote'
+            : '第 $week 周今天暂无安排')
+        : todayExams.isEmpty
+            ? '共 ${todayCourses.length} 节课程$adjNote'
+            : todayCourses.isEmpty
+                ? '今天有 ${todayExams.length} 场考试$adjNote'
+                : '${todayCourses.length} 节课程 · ${todayExams.length} 场考试$adjNote';
     return GlassCard(
       onTap: onOpenSchedule,
       child: Column(
@@ -219,9 +251,11 @@ class TodayScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              const IconBadge(
+              IconBadge(
                 icon: Icons.calendar_today_rounded,
-                color: Color(0xFF3B82F6),
+                color: todayExams.isNotEmpty
+                    ? const Color(0xFFD93848)
+                    : const Color(0xFF3B82F6),
                 size: 36,
               ),
               const SizedBox(width: 10),
@@ -230,7 +264,7 @@ class TodayScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '今日课程',
+                      todayExams.isNotEmpty ? '今日课程与考试' : '今日课程',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -238,12 +272,12 @@ class TodayScreen extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      todayCourses.isEmpty
-                          ? '第 $week 周今天暂无安排'
-                          : '共 ${todayCourses.length} 节课程',
+                      summaryText,
                       style: TextStyle(
                         fontSize: 12,
-                        color: GlassColors.muted(context),
+                        color: todayExams.isNotEmpty
+                            ? const Color(0xFFD93848)
+                            : GlassColors.muted(context),
                       ),
                     ),
                   ],
@@ -267,7 +301,7 @@ class TodayScreen extends StatelessWidget {
               ),
             ],
           ),
-          if (todayCourses.isEmpty) ...[
+          if (!hasAnyToday) ...[
             const SizedBox(height: 12),
             Text(
               appState.courses.isEmpty
@@ -277,6 +311,11 @@ class TodayScreen extends StatelessWidget {
             ),
           ] else ...[
             const SizedBox(height: 12),
+            for (final exam in todayExams)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _TodayExamTile(exam: exam),
+              ),
             for (final course in todayCourses)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -722,6 +761,96 @@ class _TodayCourseTile extends StatelessWidget {
                     if (course.room.isNotEmpty) course.room,
                     if (course.teacher.isNotEmpty) course.teacher,
                   ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: GlassColors.muted(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayExamTile extends StatelessWidget {
+  final JwExam exam;
+
+  const _TodayExamTile({required this.exam});
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFFD93848);
+    final timeStr = exam.startClock.isNotEmpty && exam.endClock.isNotEmpty
+        ? '${exam.startClock}-${exam.endClock}'
+        : (exam.startClock.isNotEmpty ? exam.startClock : '时间待定');
+    final roomText = [
+      exam.campus,
+      exam.location,
+      if (exam.seatNo.isNotEmpty) '座${exam.seatNo}',
+    ].where((e) => e.isNotEmpty).join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 3.5,
+            height: 36,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Text(
+                        '考试',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        exam.courseName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: GlassColors.ink(context),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [timeStr, if (roomText.isNotEmpty) roomText].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

@@ -7,6 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/campus_endpoints.dart';
 import 'core/coordinate_converter.dart';
 import 'core/exceptions.dart';
+import 'core/schedule_adjustments.dart';
+import 'core/schedule_exam_fusion.dart';
+import 'core/schedule_text_parser.dart';
 import 'core/semester_config.dart';
 import 'data/auth_repository.dart';
 import 'data/models.dart';
@@ -76,12 +79,13 @@ class CampusAppState extends ChangeNotifier {
     updateChecker = UpdateChecker(httpClient);
   }
 
-  static const String appVersion = '0.6.5';
-  static const int appBuildNumber = 18;
+  static const String appVersion = '0.6.6';
+  static const int appBuildNumber = 19;
 
   static const String _kCoursesCache = 'cp_cache_courses_v1';
   static const String _kGradesCache = 'cp_cache_grades_v1';
   static const String _kExamsCache = 'cp_cache_exams_v1';
+  static const String _kScheduleAdjustments = 'cp_schedule_adjustments_v1';
   static const String _kElectricityCache = 'cp_cache_electricity_v1';
   static const String _kWeatherPref = 'cp_pref_weather_loc_v1';
   static const String _kLastSyncTime = 'cp_last_sync_at_v1';
@@ -144,8 +148,13 @@ class CampusAppState extends ChangeNotifier {
   List<JwCourse> courses = const [];
   List<JwGrade> grades = const [];
   List<JwExam> exams = const [];
+  List<ScheduleDayAdjustment> scheduleAdjustments = const [];
   bool syncingJw = false;
   String? jwError;
+
+  Map<String, ScheduleDayAdjustment> get scheduleAdjustmentsByDate => {
+        for (final a in scheduleAdjustments) a.targetDate: a,
+      };
 
   // 校园卡数据
   CampusCardOverview? cardOverview;
@@ -248,6 +257,18 @@ class CampusAppState extends ChangeNotifier {
             .whereType<Map<String, dynamic>>()
             .map(JwCourse.fromJson)
             .toList();
+      } catch (_) {}
+    }
+
+    final rawAdjustments = prefs.getString(_kScheduleAdjustments);
+    if (rawAdjustments != null && rawAdjustments.isNotEmpty) {
+      try {
+        scheduleAdjustments = (jsonDecode(rawAdjustments) as List)
+            .whereType<Map<String, dynamic>>()
+            .map(ScheduleDayAdjustment.fromJson)
+            .where((a) => a.targetDate.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.targetDate.compareTo(b.targetDate));
       } catch (_) {}
     }
 
@@ -373,11 +394,9 @@ class CampusAppState extends ChangeNotifier {
     try {
       await refreshSessionFlags();
       final scheduleRes = await jwAdapter.fetchSchedule();
-      courses = scheduleRes.courses;
-      await _prefs?.setString(
-        _kCoursesCache,
-        jsonEncode(courses.map((e) => e.toJson()).toList()),
-      );
+      final preservedCustomCourses = courses.where((c) => c.isCustom).toList();
+      courses = [...scheduleRes.courses, ...preservedCustomCourses];
+      await _persistCourses();
 
       final fetchedGrades = await jwAdapter.fetchGrades();
       grades = fetchedGrades;
@@ -388,11 +407,10 @@ class CampusAppState extends ChangeNotifier {
 
       try {
         final fetchedExams = await jwAdapter.fetchExams();
-        exams = fetchedExams;
-        await _prefs?.setString(
-          _kExamsCache,
-          jsonEncode(exams.map((e) => e.toJson()).toList()),
-        );
+        final preservedCustomExams = exams.where((e) => e.isCustom).toList();
+        exams = [...fetchedExams, ...preservedCustomExams]
+          ..sort(_compareExams);
+        await _persistExams();
       } catch (_) {}
 
       lastSyncAt = DateTime.now().millisecondsSinceEpoch;
@@ -420,6 +438,144 @@ class CampusAppState extends ChangeNotifier {
       notifyListeners();
       return jwError!;
     }
+  }
+
+  // ---- 自定义课表 / 自定义考试（教务同步永不覆盖）----
+
+  Future<void> _persistCourses() async {
+    await _prefs?.setString(
+      _kCoursesCache,
+      jsonEncode(courses.map((e) => e.toJson()).toList()),
+    );
+  }
+
+  Future<void> _persistExams() async {
+    await _prefs?.setString(
+      _kExamsCache,
+      jsonEncode(exams.map((e) => e.toJson()).toList()),
+    );
+  }
+
+  int _compareExams(JwExam a, JwExam b) {
+    final c1 = a.examDate.compareTo(b.examDate);
+    if (c1 != 0) return c1;
+    final c2 = a.startClock.compareTo(b.startClock);
+    if (c2 != 0) return c2;
+    return a.courseName.compareTo(b.courseName);
+  }
+
+  Future<void> upsertCustomCourse({
+    String? existingId,
+    required String name,
+    required int dayOfWeek,
+    required int startPeriod,
+    required int endPeriod,
+    required String weeksSpec,
+    String room = '',
+    String campus = '',
+    String teacher = '',
+  }) async {
+    final item = ScheduleExamFusion.buildCustomCourse(
+      existingId: existingId,
+      name: name,
+      dayOfWeek: dayOfWeek,
+      startPeriod: startPeriod,
+      endPeriod: endPeriod,
+      weeksSpec: weeksSpec,
+      room: room,
+      campus: campus,
+      teacher: teacher,
+    );
+    final next = courses.where((c) => !(c.isCustom && c.id == item.id)).toList()
+      ..add(item);
+    courses = next;
+    await _persistCourses();
+    notifyListeners();
+  }
+
+  Future<void> deleteCustomCourse(String id) async {
+    courses = courses.where((c) => !(c.isCustom && c.id == id)).toList();
+    await _persistCourses();
+    notifyListeners();
+  }
+
+  Future<void> upsertCustomExam({
+    String? existingKey,
+    required String courseName,
+    required String examDate,
+    required String startClock,
+    required String endClock,
+    String location = '',
+    String campus = '',
+    String examType = '自定义考试',
+    String seatNo = '',
+    String note = '',
+  }) async {
+    final item = ScheduleExamFusion.buildCustomExam(
+      existingKey: existingKey,
+      courseName: courseName,
+      examDate: examDate,
+      startClock: startClock,
+      endClock: endClock,
+      location: location,
+      campus: campus,
+      examType: examType,
+      seatNo: seatNo,
+      note: note,
+    );
+    final next = exams.where((e) => e.key != item.key).toList()
+      ..add(item)
+      ..sort(_compareExams);
+    exams = next;
+    await _persistExams();
+    notifyListeners();
+  }
+
+  Future<void> deleteCustomExam(String key) async {
+    exams = exams.where((e) => e.key != key).toList();
+    await _persistExams();
+    notifyListeners();
+  }
+
+  Future<String> saveReviewedDrafts(List<ParsedScheduleDraft> drafts) async {
+    final active =
+        drafts.where((d) => d.selected && d.title.trim().isNotEmpty).toList();
+    if (active.isEmpty) return '未选中任何条目';
+    var courseCount = 0;
+    var examCount = 0;
+    for (final d in active) {
+      if (d.kind == ParsedItemKind.course) {
+        await upsertCustomCourse(
+          name: d.title,
+          dayOfWeek: d.dayOfWeek,
+          startPeriod: d.startPeriod,
+          endPeriod: d.endPeriod,
+          weeksSpec: d.weeksSpec,
+          room: d.room,
+          campus: d.campus,
+          teacher: d.teacher,
+        );
+        courseCount++;
+      } else {
+        await upsertCustomExam(
+          courseName: d.title,
+          examDate: d.examDate,
+          startClock: d.startClock,
+          endClock: d.endClock,
+          location: d.room,
+          campus: d.campus,
+          examType: d.examType,
+          seatNo: d.seatNo,
+          note: d.note,
+        );
+        examCount++;
+      }
+    }
+    final parts = <String>[
+      if (courseCount > 0) '$courseCount 节课程',
+      if (examCount > 0) '$examCount 场考试',
+    ];
+    return '审核确认完成，已加入 ${parts.join('、')}';
   }
 
   // ---- 校园卡 ----
@@ -752,6 +908,75 @@ class CampusAppState extends ChangeNotifier {
       loadingChaoxing = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _persistScheduleAdjustments() async {
+    await _prefs?.setString(
+      _kScheduleAdjustments,
+      jsonEncode(scheduleAdjustments.map((e) => e.toJson()).toList()),
+    );
+  }
+
+  Future<void> upsertScheduleAdjustments(List<ScheduleDayAdjustment> rules) async {
+    if (rules.isEmpty) return;
+    final map = {for (final a in scheduleAdjustments) a.targetDate: a};
+    for (final r in rules) {
+      map[r.targetDate] = r;
+    }
+    scheduleAdjustments = map.values.toList()
+      ..sort((a, b) => a.targetDate.compareTo(b.targetDate));
+    await _persistScheduleAdjustments();
+    notifyListeners();
+  }
+
+  Future<void> saveSwapAdjustment({
+    required String targetDate,
+    required String sourceDate,
+    required String label,
+    required bool markSourceAsRest,
+  }) async {
+    final cleanLabel = label.trim().isEmpty ? '节假日调休' : label.trim();
+    final rules = <ScheduleDayAdjustment>[
+      ScheduleDayAdjustment(
+        targetDate: targetDate.trim(),
+        type: ScheduleAdjustmentType.swap,
+        sourceDate: sourceDate.trim(),
+        label: cleanLabel,
+      ),
+    ];
+    if (markSourceAsRest && sourceDate.trim() != targetDate.trim()) {
+      rules.add(
+        ScheduleDayAdjustment(
+          targetDate: sourceDate.trim(),
+          type: ScheduleAdjustmentType.rest,
+          label: cleanLabel.replaceAll('调休', '放假'),
+        ),
+      );
+    }
+    await upsertScheduleAdjustments(rules);
+  }
+
+  Future<int> saveRestRangeAdjustment({
+    required String startDate,
+    required String endDate,
+    required String label,
+  }) async {
+    final rules = ScheduleAdjustments.expandRestRange(startDate, endDate, label);
+    await upsertScheduleAdjustments(rules);
+    return rules.length;
+  }
+
+  Future<void> deleteScheduleAdjustment(String targetDate) async {
+    scheduleAdjustments =
+        scheduleAdjustments.where((a) => a.targetDate != targetDate).toList();
+    await _persistScheduleAdjustments();
+    notifyListeners();
+  }
+
+  Future<void> clearAllScheduleAdjustments() async {
+    scheduleAdjustments = const [];
+    await _persistScheduleAdjustments();
+    notifyListeners();
   }
 
   // ---- 高级配置 & 自动登录 ----

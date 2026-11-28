@@ -98,3 +98,22 @@ class QrScannerBridge {
     }
   }
 }
+
+/// iOS 原生 PHPickerViewController + Vision 离线中英文截图文字识别桥接。
+///
+/// 零第三方依赖、零相册全局权限申请、所有识别均在设备本地离线完成。
+class OfflineOcrBridge {
+  static const MethodChannel _channel =
+      MethodChannel('com.ecut.campuspocket/ocr');
+
+  static Future<String?> pickImageAndRecognizeText() async {
+    try {
+      final result =
+          await _channel.invokeMethod<String>('pickImageAndRecognizeText');
+      if (result == null) return null;
+      return result.trim();
+    } on MissingPluginException {
+      return null;
+    }
+  }
+}

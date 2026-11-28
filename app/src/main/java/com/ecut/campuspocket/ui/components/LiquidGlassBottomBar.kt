@@ -427,19 +427,20 @@ fun LiquidGlassBottomBar(
                     .background(glassTint)
             )
 
-            // 3. 顶部镜面高光 + 底部内阴影。
+            // 3. 顶部镜面高光 + 底部内阴影（深色模式下外层 borderBrush 已提供细腻边缘高光，避免额外直线形成灰白横线）。
             Canvas(Modifier.matchParentSize()) {
                 val w = size.width
                 val h = size.height
-                val highlight = Color.White.copy(alpha = if (dark) 0.26f else 0.72f)
-                val topY = 1.4.dp.toPx()
-                drawLine(
-                    color = highlight,
-                    start = Offset(w * 0.06f, topY),
-                    end = Offset(w * 0.94f, topY),
-                    strokeWidth = 1.2.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
+                if (!dark) {
+                    val topY = 1.4.dp.toPx()
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.72f),
+                        start = Offset(w * 0.06f, topY),
+                        end = Offset(w * 0.94f, topY),
+                        strokeWidth = 1.2.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
                 drawLine(
                     color = Color.Black.copy(alpha = if (dark) 0.22f else 0.045f),
                     start = Offset(w * 0.12f, h - 1.dp.toPx()),
@@ -519,7 +520,7 @@ fun LiquidGlassBottomBar(
                 )
                 .border(
                     width = 1.5.dp,
-                    color = Color.White.copy(alpha = 0.70f),
+                    color = Color.White.copy(alpha = if (dark) 0.34f else 0.70f),
                     shape = CircleShape
                 ),
             shape = CircleShape,
@@ -555,9 +556,9 @@ private fun LiquidGlassLensPill(
         val bodyBrush = if (dark) {
             Brush.verticalGradient(
                 colors = listOf(
-                    Color.White.copy(alpha = if (isTouching) 0.28f else 0.16f),
-                    Color(0xFF7BE8D2).copy(alpha = if (isTouching) 0.16f else 0.08f),
-                    Color.White.copy(alpha = if (isTouching) 0.14f else 0.06f)
+                    Color.White.copy(alpha = if (isTouching) 0.22f else 0.14f),
+                    Color(0xFF7BE8D2).copy(alpha = if (isTouching) 0.14f else 0.08f),
+                    Color.White.copy(alpha = if (isTouching) 0.10f else 0.05f)
                 )
             )
         } else {
@@ -571,30 +572,32 @@ private fun LiquidGlassLensPill(
         }
         drawRoundRect(brush = bodyBrush, cornerRadius = radius)
 
-        // 顶部镜面折射高光弧线
-        val specularBrush = Brush.horizontalGradient(
-            colors = listOf(
-                Color.Transparent,
-                Color.White.copy(alpha = if (dark) 0.52f else 0.96f),
-                Color.Transparent
+        // 顶部镜面折射高光：仅在浅色亮玻璃上绘制，深色下避免顶部出现生硬的灰白色横线
+        if (!dark) {
+            val specularBrush = Brush.horizontalGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    Color.White.copy(alpha = 0.96f),
+                    Color.Transparent
+                )
             )
-        )
-        drawLine(
-            brush = specularBrush,
-            start = Offset(w * 0.22f, 2.2.dp.toPx()),
-            end = Offset(w * 0.78f, 2.2.dp.toPx()),
-            strokeWidth = (if (isTouching) 2.dp else 1.4.dp).toPx(),
-            cap = StrokeCap.Round
-        )
+            drawLine(
+                brush = specularBrush,
+                start = Offset(w * 0.22f, 2.2.dp.toPx()),
+                end = Offset(w * 0.78f, 2.2.dp.toPx()),
+                strokeWidth = (if (isTouching) 2.dp else 1.4.dp).toPx(),
+                cap = StrokeCap.Round
+            )
+        }
 
         // 液态玻璃色散描边（白 → 青 → 紫）
         val strokeBrush = Brush.linearGradient(
             colors = if (dark) {
                 listOf(
-                    Color.White.copy(alpha = if (isTouching) 0.58f else 0.30f),
-                    GlowTeal.copy(alpha = if (isTouching) 0.42f else 0.20f),
-                    GlowViolet.copy(alpha = if (isTouching) 0.40f else 0.18f),
-                    Color.White.copy(alpha = if (isTouching) 0.42f else 0.18f)
+                    Color.White.copy(alpha = if (isTouching) 0.36f else 0.22f),
+                    GlowTeal.copy(alpha = if (isTouching) 0.34f else 0.18f),
+                    GlowViolet.copy(alpha = if (isTouching) 0.30f else 0.16f),
+                    Color.White.copy(alpha = if (isTouching) 0.24f else 0.14f)
                 )
             } else {
                 listOf(

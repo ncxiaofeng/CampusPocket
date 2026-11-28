@@ -89,12 +89,22 @@ interface CourseDao {
     @Insert
     suspend fun insertAll(courses: List<CourseEntity>)
 
+    @Upsert
+    suspend fun upsert(course: CourseEntity): Long
+
+    @Query("DELETE FROM course_blocks WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM course_blocks WHERE isCustom = 0")
+    suspend fun clearSynced()
+
     @Query("DELETE FROM course_blocks")
     suspend fun clear()
 
+    /** 教务同步只替换非自定义课程，保留用户手动/智能添加的自定义课程。 */
     @Transaction
     suspend fun replaceAll(courses: List<CourseEntity>) {
-        clear()
+        clearSynced()
         insertAll(courses)
     }
 }
@@ -110,12 +120,22 @@ interface ExamDao {
     @Insert
     suspend fun insertAll(exams: List<ExamEntity>)
 
+    @Upsert
+    suspend fun upsert(exam: ExamEntity)
+
+    @Query("DELETE FROM exams WHERE `key` = :key")
+    suspend fun deleteByKey(key: String)
+
+    @Query("DELETE FROM exams WHERE isCustom = 0")
+    suspend fun clearSynced()
+
     @Query("DELETE FROM exams")
     suspend fun clear()
 
+    /** 教务同步只替换非自定义考试，保留用户手动/智能添加的自定义考试。 */
     @Transaction
     suspend fun replaceAll(exams: List<ExamEntity>) {
-        clear()
+        clearSynced()
         insertAll(exams)
     }
 }

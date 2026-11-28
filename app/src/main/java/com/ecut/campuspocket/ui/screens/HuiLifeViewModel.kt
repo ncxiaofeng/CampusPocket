@@ -31,7 +31,7 @@ class HuiLifeViewModel(
     var phone by mutableStateOf(preferences.huiLifePhone)
     var graphCode by mutableStateOf("")
     var smsCode by mutableStateOf("")
-    var platform by mutableStateOf(HuiLifePlatform.ACCOUNT)
+    var platform by mutableStateOf(HuiLifePlatform.APP)
         private set
     var captcha by mutableStateOf<ImageBitmap?>(null)
         private set

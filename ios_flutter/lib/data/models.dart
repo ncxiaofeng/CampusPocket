@@ -75,6 +75,7 @@ class AuthCredential {
 }
 
 class JwCourse {
+  final String id;
   final String name;
   final String teacher;
   final String room;
@@ -87,8 +88,10 @@ class JwCourse {
   final Set<int> weeks;
   final String weeksSpec;
   final String courseCode;
+  final bool isCustom;
 
   const JwCourse({
+    this.id = '',
     required this.name,
     required this.teacher,
     required this.room,
@@ -101,9 +104,11 @@ class JwCourse {
     required this.weeks,
     required this.weeksSpec,
     required this.courseCode,
+    this.isCustom = false,
   });
 
   Map<String, dynamic> toJson() => {
+        'id': id,
         'name': name,
         'teacher': teacher,
         'room': room,
@@ -116,9 +121,11 @@ class JwCourse {
         'weeks': weeks.toList()..sort(),
         'weeksSpec': weeksSpec,
         'courseCode': courseCode,
+        'isCustom': isCustom,
       };
 
   factory JwCourse.fromJson(Map<String, dynamic> json) => JwCourse(
+        id: (json['id'] ?? '').toString(),
         name: (json['name'] ?? '').toString(),
         teacher: (json['teacher'] ?? '').toString(),
         room: (json['room'] ?? '').toString(),
@@ -133,6 +140,7 @@ class JwCourse {
             .toSet(),
         weeksSpec: (json['weeksSpec'] ?? '').toString(),
         courseCode: (json['courseCode'] ?? '').toString(),
+        isCustom: json['isCustom'] == true,
       );
 }
 
@@ -216,6 +224,7 @@ class JwExam {
   final String ticketNo;
   final String note;
   final String term;
+  final bool isCustom;
 
   const JwExam({
     required this.key,
@@ -233,6 +242,7 @@ class JwExam {
     required this.ticketNo,
     required this.note,
     required this.term,
+    this.isCustom = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -251,6 +261,7 @@ class JwExam {
         'ticketNo': ticketNo,
         'note': note,
         'term': term,
+        'isCustom': isCustom,
       };
 
   factory JwExam.fromJson(Map<String, dynamic> json) => JwExam(
@@ -269,6 +280,7 @@ class JwExam {
         ticketNo: (json['ticketNo'] ?? '').toString(),
         note: (json['note'] ?? '').toString(),
         term: (json['term'] ?? '').toString(),
+        isCustom: json['isCustom'] == true,
       );
 }
 

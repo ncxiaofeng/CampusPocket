@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
+import '../../core/schedule_text_parser.dart';
 import '../../data/models.dart';
 import '../theme/glass_theme.dart';
+import '../widgets/schedule_import_dialogs.dart';
 
-/// 考试安排：按即将考试 / 已结束分组。
+/// 考试安排：按即将考试 / 已结束分组，支持手动添加与离线智能识别（剪贴板 / Vision 截图）。
 class ExamsScreen extends StatelessWidget {
   final CampusAppState appState;
   final VoidCallback onSync;
@@ -37,6 +39,15 @@ class ExamsScreen extends StatelessWidget {
           title: const Text('考试安排'),
           actions: [
             IconButton(
+              tooltip: '添加或智能识别考试',
+              onPressed: () => showAddScheduleEntrySheet(
+                context: context,
+                appState: appState,
+                defaultKindHint: ParsedItemKind.exam,
+              ),
+              icon: const Icon(Icons.add_rounded),
+            ),
+            IconButton(
               onPressed: appState.syncingJw ? null : onSync,
               icon: const Icon(Icons.sync_rounded),
             ),
@@ -60,11 +71,21 @@ class ExamsScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '教务系统通常在考试周前 2-3 周公布考场与时间；可随时点击右上角刷新同步。',
+                      '可点击右上角刷新同步教务，或手动添加 / 通过剪贴板与截图离线识别考试通知，自动融合显示在课表上。',
                       style: TextStyle(
                         fontSize: 13,
                         color: GlassColors.muted(context),
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () => showAddScheduleEntrySheet(
+                        context: context,
+                        appState: appState,
+                        defaultKindHint: ParsedItemKind.exam,
+                      ),
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('添加 / 智能识别考试'),
                     ),
                   ],
                 ),
@@ -72,14 +93,34 @@ class ExamsScreen extends StatelessWidget {
             if (upcoming.isNotEmpty) ...[
               _SectionTitle('即将考试 (${upcoming.length})'),
               for (final exam in upcoming) ...[
-                _ExamCard(exam: exam, finished: false),
+                _ExamCard(
+                  exam: exam,
+                  finished: false,
+                  onTap: exam.isCustom
+                      ? () => showAddOrEditExamDialog(
+                            context: context,
+                            appState: appState,
+                            initial: exam,
+                          )
+                      : null,
+                ),
                 const SizedBox(height: 10),
               ],
             ],
             if (finished.isNotEmpty) ...[
               _SectionTitle('已结束 (${finished.length})'),
               for (final exam in finished) ...[
-                _ExamCard(exam: exam, finished: true),
+                _ExamCard(
+                  exam: exam,
+                  finished: true,
+                  onTap: exam.isCustom
+                      ? () => showAddOrEditExamDialog(
+                            context: context,
+                            appState: appState,
+                            initial: exam,
+                          )
+                      : null,
+                ),
                 const SizedBox(height: 10),
               ],
             ],
@@ -113,12 +154,18 @@ class _SectionTitle extends StatelessWidget {
 class _ExamCard extends StatelessWidget {
   final JwExam exam;
   final bool finished;
+  final VoidCallback? onTap;
 
-  const _ExamCard({required this.exam, required this.finished});
+  const _ExamCard({
+    required this.exam,
+    required this.finished,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GlassCard(
+      onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -136,6 +183,24 @@ class _ExamCard extends StatelessWidget {
                   ),
                 ),
               ),
+              if (exam.isCustom) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD93848).withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    '自定义',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFFD93848),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
               if (exam.examType.isNotEmpty)
                 Container(
                   padding:
@@ -170,9 +235,10 @@ class _ExamCard extends StatelessWidget {
               '座位号：${exam.seatNo}',
               style: TextStyle(fontSize: 13, color: GlassColors.muted(context)),
             ),
-          if (exam.note.isNotEmpty)
+          if (exam.note.isNotEmpty || exam.isCustom)
             Text(
-              '备注：${exam.note}',
+              [if (exam.note.isNotEmpty) '备注：${exam.note}', if (exam.isCustom) '点此编辑或删除']
+                  .join(' · '),
               style: TextStyle(fontSize: 12, color: GlassColors.muted(context)),
             ),
         ],

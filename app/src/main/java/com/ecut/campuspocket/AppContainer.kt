@@ -27,6 +27,7 @@ import com.ecut.campuspocket.data.repository.JwSyncManager
 import com.ecut.campuspocket.data.repository.ScheduleRepository
 import com.ecut.campuspocket.data.repository.UjingRepository
 import com.ecut.campuspocket.data.repository.XgwxElectricityRepository
+import com.ecut.campuspocket.data.schedule.ScheduleAdjustmentStore
 import com.ecut.campuspocket.network.CampusCookieJar
 import com.ecut.campuspocket.network.CampusEndpoints
 import com.ecut.campuspocket.network.CampusNetworkState
@@ -112,6 +113,10 @@ object AppContainer {
 
     val scheduleRepository: ScheduleRepository by lazy {
         ScheduleRepository(database.courseDao())
+    }
+
+    val scheduleAdjustments: ScheduleAdjustmentStore by lazy {
+        ScheduleAdjustmentStore(requireContext())
     }
 
     val electricityRepository: ElectricityRepository by lazy {

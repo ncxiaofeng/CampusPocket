@@ -173,7 +173,7 @@ class CampusHttpClient {
           if (currentMethod == 'GET' && k.toLowerCase() == 'content-type') {
             return;
           }
-          request.headers.set(k, v);
+          request.headers.set(k, v, preserveHeaderCase: true);
         });
 
         if (useCookies && _cookieJar != null) {

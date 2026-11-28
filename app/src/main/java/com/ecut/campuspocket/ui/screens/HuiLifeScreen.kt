@@ -694,6 +694,7 @@ private fun HuiLifeLoginCard(
     onOpenConfig: () -> Unit
 ) {
     val appControlBlocked = viewModel.platform == HuiLifePlatform.APP && !hasAppControlConfig
+    val context = androidx.compose.ui.platform.LocalContext.current
     AppCard {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -702,7 +703,11 @@ private fun HuiLifeLoginCard(
                 Column {
                     Text("登录慧生活798", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "查询登录无需任何配置；手机号 + 短信验证码即可",
+                        if (hasAppControlConfig) {
+                            "手机号 + 短信验证码即可查余额、设备状态、账单并一键启动"
+                        } else {
+                            "需在高级配置导入 798 配置码后登录，也可一键跳转支付宝使用"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -712,39 +717,47 @@ private fun HuiLifeLoginCard(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PlatformChip(
-                    label = "查询登录（免配置）",
-                    selected = viewModel.platform == HuiLifePlatform.ACCOUNT,
-                    modifier = Modifier.weight(1f)
-                ) { viewModel.choosePlatform(HuiLifePlatform.ACCOUNT) }
-                PlatformChip(
-                    label = if (hasAppControlConfig) "设备控制" else "设备控制（高级）",
+                    label = if (hasAppControlConfig) "设备控制（推荐）" else "设备控制（需配置）",
                     selected = viewModel.platform == HuiLifePlatform.APP,
                     modifier = Modifier.weight(1f)
                 ) { viewModel.choosePlatform(HuiLifePlatform.APP) }
+                PlatformChip(
+                    label = "查询端（旧通道）",
+                    selected = viewModel.platform == HuiLifePlatform.ACCOUNT,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.choosePlatform(HuiLifePlatform.ACCOUNT) }
             }
             Spacer(Modifier.height(12.dp))
 
             if (appControlBlocked) {
                 Text(
-                    "公开版默认支持免配置「查询登录」：可查看钱包余额、常用设备实时空闲/使用中状态与消费记录，并一键跳转支付宝小程序接水/吹风。",
+                    "慧生活798 服务端已停用免配置旧登录通道，目前需使用官方客户端签名协议（3.1.9）登录。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "App 内直接「一键启动设备」需要官方客户端登录盐（huilife.app.sign.salt），公开版不内置。如需启用，可在「高级配置」中填写。",
+                    "公开版默认不内置签名参数。请在「高级配置」导入 798 配置码即可恢复完整余额/状态查询与一键启停，或直接跳转支付宝小程序使用。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { viewModel.choosePlatform(HuiLifePlatform.ACCOUNT) },
+                        onClick = onOpenConfig,
                         modifier = Modifier.weight(1f)
-                    ) { Text("切回免配置查询登录") }
-                    TextButton(onClick = onOpenConfig) { Text("去高级配置") }
+                    ) { Text("去高级配置") }
+                    TextButton(onClick = { openHuiLifeAlipay(context) }) { Text("打开支付宝") }
                 }
             } else {
+                if (viewModel.platform == HuiLifePlatform.ACCOUNT) {
+                    Text(
+                        "提示：旧查询通道近期已被慧生活798 服务端限制（可能报「请升级最新版应用」），建议优先使用「设备控制」登录。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarningAmber
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
                 OutlinedTextField(
                     value = viewModel.phone,
                     onValueChange = { viewModel.phone = it.filter(Char::isDigit).take(11) },
@@ -825,17 +838,13 @@ private fun HuiLifeLoginCard(
                         if (viewModel.platform == HuiLifePlatform.APP) {
                             "登录设备控制"
                         } else {
-                            "登录查询"
+                            "尝试登录旧查询通道"
                         }
                     )
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (hasAppControlConfig) {
-                        "查询端可看余额/设备/消费；设备控制端才能一键启动。两边的短信验证码不能共用，需要分别获取。"
-                    } else {
-                        "免配置查询登录即可查看余额、设备实时状态与消费记录，使用设备时可一键跳转支付宝小程序。"
-                    },
+                    "「设备控制」一次登录即可查看余额、设备实时状态、消费记录并支持扫码启停。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -906,17 +915,6 @@ private fun SessionCard(
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!viewModel.accountLoggedIn) {
-                    TextButton(
-                        onClick = { viewModel.openLogin(HuiLifePlatform.ACCOUNT) },
-                        contentPadding = PaddingValues(horizontal = 4.dp)
-                    ) { Text("登录查询端") }
-                } else {
-                    TextButton(
-                        onClick = { viewModel.logout(HuiLifePlatform.ACCOUNT) },
-                        contentPadding = PaddingValues(horizontal = 4.dp)
-                    ) { Text("退出查询端", color = ErrorRed) }
-                }
                 if (viewModel.appLoggedIn) {
                     TextButton(
                         onClick = { viewModel.logout(HuiLifePlatform.APP) },
@@ -931,7 +929,18 @@ private fun SessionCard(
                     TextButton(
                         onClick = onOpenConfig,
                         contentPadding = PaddingValues(horizontal = 4.dp)
-                    ) { Text("配置一键启动") }
+                    ) { Text("去高级配置") }
+                }
+                if (viewModel.accountLoggedIn) {
+                    TextButton(
+                        onClick = { viewModel.logout(HuiLifePlatform.ACCOUNT) },
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text("退出查询端", color = ErrorRed) }
+                } else if (!viewModel.appLoggedIn) {
+                    TextButton(
+                        onClick = { viewModel.openLogin(HuiLifePlatform.ACCOUNT) },
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text("旧查询通道") }
                 }
             }
         }

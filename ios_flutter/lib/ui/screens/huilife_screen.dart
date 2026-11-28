@@ -11,7 +11,7 @@ import '../../network/huilife_client.dart';
 import '../theme/glass_theme.dart';
 import 'runtime_config_screen.dart';
 
-/// 慧生活798 页面：查询端免配置默认登录 + 设备端扫码启动与本人安全停止 + 10 秒轮询状态。
+/// 慧生活798 页面：默认使用设备控制端（v3.1.9）登录查余额/状态/启停，兼容旧查询通道。
 class HuiLifeScreen extends StatefulWidget {
   final CampusAppState appState;
 
@@ -26,7 +26,7 @@ class _HuiLifeScreenState extends State<HuiLifeScreen> {
   final _graphCtrl = TextEditingController();
   final _smsCtrl = TextEditingController();
 
-  HuiLifePlatform _loginPlatform = HuiLifePlatform.account;
+  HuiLifePlatform _loginPlatform = HuiLifePlatform.app;
   String _captchaKey = HuiLifeClient.newCaptchaKey();
   Uint8List? _captchaBytes;
   bool _busy = false;
@@ -76,7 +76,7 @@ class _HuiLifeScreenState extends State<HuiLifeScreen> {
     }
     if (_loginPlatform == HuiLifePlatform.app &&
         !widget.appState.runtimeConfig.hasHuiLife) {
-      setState(() => _tip = '设备控制端需要先在「高级配置」导入 798 盐值；查询余额可先用免配置的「查询端」。');
+      setState(() => _tip = '设备控制端需要先在「高级配置」导入 798 配置码；也可点右上角「支付宝」打开官方小程序。');
       return;
     }
     setState(() {
@@ -450,7 +450,7 @@ class _HuiLifeScreenState extends State<HuiLifeScreen> {
                     const SizedBox(height: 14),
                   ],
                 ],
-                // 登录卡片（默认查询端免配置；需设备启停时切换设备控制端）
+                // 登录卡片（默认设备控制端 v3.1.9；旧查询通道保留作兼容）
                 GlassCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -467,17 +467,17 @@ class _HuiLifeScreenState extends State<HuiLifeScreen> {
                         spacing: 8,
                         children: [
                           ChoiceChip(
-                            label: const Text('查询端（免配置）'),
-                            selected: _loginPlatform == HuiLifePlatform.account,
-                            onSelected: (_) => setState(
-                              () => _loginPlatform = HuiLifePlatform.account,
-                            ),
-                          ),
-                          ChoiceChip(
-                            label: const Text('设备控制端'),
+                            label: const Text('设备控制端（推荐）'),
                             selected: _loginPlatform == HuiLifePlatform.app,
                             onSelected: (_) => setState(
                               () => _loginPlatform = HuiLifePlatform.app,
+                            ),
+                          ),
+                          ChoiceChip(
+                            label: const Text('查询端（旧通道）'),
+                            selected: _loginPlatform == HuiLifePlatform.account,
+                            onSelected: (_) => setState(
+                              () => _loginPlatform = HuiLifePlatform.account,
                             ),
                           ),
                         ],
@@ -489,7 +489,7 @@ class _HuiLifeScreenState extends State<HuiLifeScreen> {
                           children: [
                             const Expanded(
                               child: Text(
-                                '设备控制端需要先在「高级配置」导入 798 设备盐值。',
+                                '慧生活798 服务端已限制旧通道；请先导入 798 配置码，或点右上角「支付宝」使用。',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: GlassColors.warning,
@@ -508,6 +508,16 @@ class _HuiLifeScreenState extends State<HuiLifeScreen> {
                               child: const Text('去配置'),
                             ),
                           ],
+                        ),
+                      ],
+                      if (_loginPlatform == HuiLifePlatform.account) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          '提示：旧查询通道近期已被服务端限制（常报「请升级最新版应用」），建议使用「设备控制端」登录。',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: GlassColors.warning,
+                          ),
                         ),
                       ],
                       const SizedBox(height: 10),

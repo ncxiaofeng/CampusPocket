@@ -23,8 +23,8 @@ android {
         applicationId = "com.ecut.campuspocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.6.4"
+        versionCode = 19
+        versionName = "0.6.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -120,6 +120,8 @@ dependencies {
     implementation(libs.coil.compose)
     // 798 设备二维码扫描（离线 ML Kit，不上传图片）
     implementation("com.github.T8RIN.QuickieExtended:quickie-bundled:1.14.0")
+    // 截图智能识别加课/考试（纯本地离线中文 OCR，不上传图片）
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation(libs.junit)

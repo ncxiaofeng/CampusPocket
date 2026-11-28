@@ -60,6 +60,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ecut.campuspocket.AppContainer
 import com.ecut.campuspocket.data.ClassTimes
 import com.ecut.campuspocket.data.local.CourseEntity
+import com.ecut.campuspocket.data.schedule.ScheduleAdjustmentType
+import com.ecut.campuspocket.data.schedule.ScheduleAdjustments
+import com.ecut.campuspocket.data.schedule.ScheduleDayAdjustment
 import com.ecut.campuspocket.data.remote.card.CampusCardBill
 import com.ecut.campuspocket.data.remote.card.CampusCardOverview
 import com.ecut.campuspocket.data.remote.chaoxing.ChaoxingSnapshot
@@ -110,7 +113,8 @@ private data class TodayCourse(
     val end: String,
     val name: String,
     val room: String,
-    val color: Color
+    val color: Color,
+    val isExam: Boolean = false
 )
 
 private val coursePalette = listOf(CourseTeal, CourseBlue, CourseAmber, CourseLavender, CourseRose)
@@ -144,18 +148,39 @@ fun TodayScreen(
         }
     }
     val courses by scheduleViewModel.courses.collectAsStateWithLifecycle()
+    val exams by scheduleViewModel.exams.collectAsStateWithLifecycle()
+    val adjustments by scheduleViewModel.adjustments.collectAsStateWithLifecycle()
+    val adjustmentsByDate = remember(adjustments) { adjustments.associateBy { it.targetDate } }
     val electricityDays by electricityViewModel.days.collectAsStateWithLifecycle()
     val configVersion by AppContainer.runtimeConfig.version.collectAsStateWithLifecycle()
     val electricityConfigured = remember(configVersion) {
         AppContainer.runtimeConfig.get().hasElectricity
     }
     val todayIndex = today.dayOfWeek.value - 1
+    val todayIso = remember(today) { today.toString() }
+    val todayAdjustment = adjustmentsByDate[todayIso]
     val currentWeek = com.ecut.campuspocket.data.SemesterConfig.weekFor(today)
-    val todayCourses = remember(courses, todayIndex, currentWeek) {
-        courses.filter { it.dayOfWeek == todayIndex && it.isActiveInWeek(currentWeek) }
-            .sortedBy { if (it.startPeriod > 0) it.startPeriod else it.startSlot * 2 + 1 }
-            .map { it.toTodayCourse() }
+    val todayItems = remember(courses, exams, adjustmentsByDate, today, todayIso) {
+        val courseItems = ScheduleAdjustments.resolveDayCourses(courses, today, adjustmentsByDate)
+            .map { it.course.toTodayCourse() }
+        val examItems = exams
+            .filter { it.examDate == todayIso }
+            .map { exam ->
+                TodayCourse(
+                    start = exam.startClock.ifBlank { "待定" },
+                    end = exam.endClock.ifBlank { "考试" },
+                    name = exam.courseName,
+                    room = listOf(exam.campus, exam.location, exam.seatNo.takeIf { it.isNotBlank() }?.let { "座$it" }.orEmpty())
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · ")
+                        .ifBlank { "考场待定" },
+                    color = Color(0xFFD93848),
+                    isExam = true
+                )
+            }
+        (courseItems + examItems).sortedBy { it.start }
     }
+    val todayCourses = todayItems
     val latestDay = electricityDays.lastOrNull()
     val latestBalanceDay = remember(electricityDays) {
         electricityDays.lastOrNull { it.balance != null }
@@ -239,6 +264,7 @@ fun TodayScreen(
                 hasAnyCourses = courses.isNotEmpty(),
                 week = currentWeek,
                 todayIndex = todayIndex,
+                todayAdjustment = todayAdjustment,
                 onClick = onOpenSchedule
             )
         }
@@ -361,39 +387,70 @@ private fun TodayCoursesCard(
     hasAnyCourses: Boolean,
     week: Int,
     todayIndex: Int,
+    todayAdjustment: ScheduleDayAdjustment?,
     onClick: () -> Unit
 ) {
+    val examCount = courses.count { it.isExam }
+    val courseCount = courses.size - examCount
     AppCard(onClick = onClick) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text(
-                        text = "今日课程",
+                        text = if (examCount > 0) "今日课程与考试" else "今日课程",
                         style = MaterialTheme.typography.titleMedium
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "第 $week 周 · 周${
-                            listOf("一", "二", "三", "四", "五", "六", "日")[todayIndex]
-                        }",
+                        text = buildString {
+                            append("第 $week 周 · 周${listOf("一", "二", "三", "四", "五", "六", "日")[todayIndex]}")
+                            when (todayAdjustment?.type) {
+                                ScheduleAdjustmentType.REST -> append(" · ${todayAdjustment.label.ifBlank { "放假停课" }}")
+                                ScheduleAdjustmentType.SWAP -> append(" · 调休上 ${ScheduleAdjustments.shortDateWithWeekday(todayAdjustment.sourceDate)} 课")
+                                null -> Unit
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (todayAdjustment != null) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.weight(1f))
                 if (courses.isNotEmpty()) {
+                    val badgeText = when {
+                        examCount > 0 && courseCount > 0 -> "$courseCount 课 · $examCount 考"
+                        examCount > 0 -> "$examCount 场考试"
+                        else -> "$courseCount 门"
+                    }
+                    val badgeColor = if (examCount > 0) Color(0xFFD93848) else MaterialTheme.colorScheme.primary
                     Box(
                         modifier = Modifier
                             .background(
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                badgeColor.copy(alpha = 0.10f),
                                 RoundedCornerShape(12.dp)
                             )
                             .padding(horizontal = 10.dp, vertical = 5.dp)
                     ) {
                         Text(
-                            text = "${courses.size} 门",
+                            text = badgeText,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = badgeColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                } else if (todayAdjustment?.type == ScheduleAdjustmentType.REST) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                CourseAmber.copy(alpha = 0.14f),
+                                RoundedCornerShape(12.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "放假停课",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CourseAmber,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -402,16 +459,23 @@ private fun TodayCoursesCard(
             Spacer(Modifier.height(16.dp))
             if (courses.isEmpty()) {
                 Text(
-                    text = "今天暂无课程",
+                    text = if (todayAdjustment?.type == ScheduleAdjustmentType.REST) {
+                        "今日放假停课"
+                    } else {
+                        "今天暂无课程"
+                    },
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = if (hasAnyCourses) {
-                        "今天没有排课，点此查看本周完整课表"
-                    } else {
-                        "登录教务系统并同步后，课表会显示在这里"
+                    text = when {
+                        todayAdjustment?.type == ScheduleAdjustmentType.REST ->
+                            "已设置「${todayAdjustment.label.ifBlank { "节假日放假" }}」，点击可查看或管理调休"
+                        hasAnyCourses ->
+                            "今天没有排课，点此查看本周完整课表"
+                        else ->
+                            "登录教务系统并同步后，课表会显示在这里"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -451,10 +515,27 @@ private fun CourseRow(course: TodayCourse) {
         )
         Spacer(Modifier.width(12.dp))
         Column {
-            Text(
-                text = course.name,
-                style = MaterialTheme.typography.titleSmall
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (course.isExam) {
+                    Box(
+                        modifier = Modifier
+                            .background(course.color.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = "考试",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = course.color,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    text = course.name,
+                    style = MaterialTheme.typography.titleSmall
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 text = course.room,
